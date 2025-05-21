@@ -1,0 +1,26 @@
+{
+    "name": "physicsnemo-dev",
+    "image": "nvcr.io/nvidia/physicsnemo/physicsnemo:25.03",
+    "remoteUser": "ubuntu",
+    "workspaceFolder": "/workspace",
+    "runArgs": [
+      "--gpus", "1",
+      "--shm-size=16g",
+      "--ulimit", "memlock=-1",
+      "--ulimit", "stack=67108864",
+      "--runtime=nvidia"
+    ],
+    "mounts": [
+      "source=/home/harish/Ongoing_Research/Gust_field_nowcasting_from_Sparse_stations,target=/workspace,type=bind,consistency=cached",
+      "source=/data/harish/Gust_field_nowcasting_from_Sparse_stations,target=/workspace/data,type=bind,consistency=cached"
+    ],
+    "customizations": {
+      "vscode": {
+        "settings": {
+          "terminal.integrated.defaultProfile.linux": "bash"
+        }
+      }
+    },
+    "postCreateCommand": "pip install --quiet torchmetrics seaborn[stats] metpy scikit-optimize"
+  }
+  

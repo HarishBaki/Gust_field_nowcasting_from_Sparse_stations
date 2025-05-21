@@ -172,3 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+slurmout
+data
+Sparse_to_Dense_best_model.pt
