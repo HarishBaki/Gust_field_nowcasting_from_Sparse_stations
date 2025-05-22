@@ -260,8 +260,8 @@ if __name__ == "__main__":
     validation_dataloader = DataLoader(
         validation_dataset,
         batch_size=batch_size,
-        sampler=train_sampler,
-        shuffle=(train_sampler is None), # shuffle if not using DDP
+        sampler=validation_sampler,
+        shuffle=(validation_sampler is None), # shuffle if not using DDP
         pin_memory=True,
         num_workers=num_workers,
         drop_last=True
