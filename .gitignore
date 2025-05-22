@@ -176,3 +176,4 @@ cython_debug/
 slurmout
 data
 Sparse_to_Dense_best_model.pt
+checkpoints
