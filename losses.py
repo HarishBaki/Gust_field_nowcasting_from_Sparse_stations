@@ -22,7 +22,7 @@ class MaskedMSELoss(nn.Module):
         super().__init__()
         self.register_buffer("mask_2d", mask_2d.float())
 
-    def forward(self, output, target, station_mask, reduction='mean'):
+    def forward(self, output, target, reduction='mean'):
         """
         output: [B, 1, H, W]
         target: [B, 1, H, W]
@@ -31,10 +31,9 @@ class MaskedMSELoss(nn.Module):
         assert reduction in ['none', 'mean', 'global']
         B, _, H, W = output.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
-        station_mask = station_mask.float()
 
         # Apply valid mask (inside NY, not at stations)
-        valid_mask = (mask == 1) & (station_mask == 0)
+        valid_mask = (mask == 1)    # [1, 1, H, W]
         valid_mask = valid_mask.float()
 
         # Compute per-sample MSE
@@ -69,7 +68,7 @@ class MaskedRMSELoss(nn.Module):
         super().__init__()
         self.register_buffer("mask_2d", mask_2d.float())
 
-    def forward(self, output, target, station_mask, reduction='mean'):
+    def forward(self, output, target, reduction='mean'):
         """
         output: [B, 1, H, W]
         target: [B, 1, H, W]
@@ -78,9 +77,8 @@ class MaskedRMSELoss(nn.Module):
         assert reduction in ['mean', 'none', 'global']
         B, _, H, W = output.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
-        station_mask = station_mask.float()
 
-        valid_mask = (mask == 1) & (station_mask == 0)  # [B,1,H,W]
+        valid_mask = (mask == 1)  # [1,1,H,W]
         valid_mask = valid_mask.float()
 
         se = (output - target) ** 2
@@ -151,7 +149,7 @@ class MaskedCharbonnierLoss(nn.Module):
         self.register_buffer("mask_2d", mask_2d.float())   # persists on .cuda()/.cpu(), such that the mask_2d devie is used.
         self.eps = eps
 
-    def forward(self, x, y, station_mask):
+    def forward(self, x, y):
         """
         x: [B, 1, H, W] (prediction)
         y: [B, 1, H, W] (target)
@@ -159,8 +157,8 @@ class MaskedCharbonnierLoss(nn.Module):
         """
         B, _, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        station_mask = station_mask.float()     # [B, 1, H, W]
-        valid_mask = (mask == 1) & (station_mask == 0)       # [B, 1, H, W]
+        valid_mask = (mask == 1)       # [1, 1, H, W]
+        valid_mask = valid_mask.float()
 
         diff = x - y
         charbonnier = torch.sqrt(diff**2 + self.eps**2)
