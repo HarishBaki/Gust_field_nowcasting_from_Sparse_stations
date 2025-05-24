@@ -17,7 +17,7 @@ stats = {'mean': {}, 'std': {}, 'min': {}, 'max': {}}
 for variable in variables:
     ds = xr.open_zarr(zarr_store)[variable]
     ds = ds.sel(time=slice(dates_range[0], dates_range[1]))
-    ds = ds.where(mask,0)
+    ds = ds.where(mask)
     
     print(f"Processing {variable} with {len(ds.time)} samples")
     mean = ds.mean(dim=['time', 'y', 'x'])
