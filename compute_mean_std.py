@@ -5,7 +5,7 @@ import numpy as np
 # %%
 orography = xr.open_dataset('orography.nc').orog
 zarr_store = 'data/NYSM.zarr'
-dates_range = ['2019-01-01T00','2022-12-31T23']
+dates_range = ['2023-01-01T00','2023-12-31T23']
 variables = ['i10fg']
 mask = xr.open_dataset('mask_2d.nc').mask
 
@@ -30,6 +30,7 @@ for variable in variables:
     stats['min'][variable] = min_val.values
     stats['max'][variable] = max_val.values
 
+# %%
 variable = 'orography'
 ds = xr.open_dataset('orography.nc').orog
 print(f"Processing {variable}")
