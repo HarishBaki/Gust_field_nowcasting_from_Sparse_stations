@@ -57,11 +57,16 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
         train_metric_total = 0.0
         show_progress = not dist.is_initialized() or dist.get_rank() == 0
         train_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{num_epochs} [Train]", leave=False) if show_progress else train_dataloader
-        for batch in train_bar:
+        for batch_idx,batch in enumerate(train_bar):
+            #start_time = time.time()
             input_tensor, target_tensor,_,_ = batch
-            # Here you can extract the station values and mask if needed
             input_tensor = input_tensor.to(device, non_blocking=True)   # [B, C, H, W]
             target_tensor = target_tensor.to(device, non_blocking=True)    # [B, C, H, W]
+            #end_time = time.time()
+            #print(f"[Batch {batch_idx}] Data load time: {end_time - start_time:.4f} seconds")
+            # Break early to test
+            #if batch_idx == 5:
+            #    break
 
             optimizer.zero_grad()
             output = model(input_tensor)
@@ -164,7 +169,7 @@ if __name__ == "__main__":
     model_name = 'UNet'
     activation_layer = 'gelu'
     batch_size = 16
-    num_workers = 32
+    num_workers = 16
     weights_seed = 42
     num_epochs = 200
     loss_name = 'MaskedCharbonnierLoss'
@@ -234,7 +239,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         sampler=train_sampler,
         shuffle=(train_sampler is None), # shuffle if not using DDP
-        pin_memory=True,
+        pin_memory=True,prefetch_factor=4, persistent_workers=True,
         num_workers=num_workers,
         drop_last=True
     )
@@ -262,7 +267,7 @@ if __name__ == "__main__":
         batch_size=batch_size,
         sampler=validation_sampler,
         shuffle=(validation_sampler is None), # shuffle if not using DDP
-        pin_memory=True,
+        pin_memory=True,prefetch_factor=4, persistent_workers=True,
         num_workers=num_workers,
         drop_last=True
     )
@@ -377,6 +382,29 @@ if __name__ == "__main__":
             name=f"{model_name}_{input_window_size}_steps_in_to_{output_window_size}_steps_out",
             dir="wandb_logs"
         )
+
+    '''
+    # === Checking the data loading bottle neck ===
+    print(f"🧪 [Rank {rank}] Testing DataLoader...")
+    loader_start = time.time()
+
+    data_bar = tqdm(enumerate(train_dataloader), desc=f"🔄 Rank {rank} DataLoader Test")
+
+    for b_idx, batch in data_bar:
+        t0 = time.time()
+        input_tensor, target_tensor, in_time, out_time = batch
+        input_tensor = input_tensor.to(device, non_blocking=True)
+        target_tensor = target_tensor.to(device, non_blocking=True)
+        t1 = time.time()
+
+        data_bar.set_postfix({
+            "load_time_s": f"{t1 - t0:.4f}",
+            "input_shape": str(tuple(input_tensor.shape))
+        })
+
+    loader_end = time.time()
+    print(f"✅ [Rank {rank}] Completed in {loader_end - loader_start:.2f} seconds.")
+    '''
     
     # === Run the training and validation ===
     if not dist.is_initialized() or dist.get_rank() == 0:
