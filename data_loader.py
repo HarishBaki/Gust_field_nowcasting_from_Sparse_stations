@@ -9,6 +9,60 @@ import pandas as pd
 import time
 import os
 # %%
+class Transform:
+    def __init__(self, mode, stats, channel_indices=None):
+        """
+        mode: 'standard' or 'minmax'
+        stats: 
+            if mode == 'standard': {'mean': [...], 'std': [...]}
+            if mode == 'minmax': {'min': [...], 'max': [...]}
+        channel_indices: list of channel indices to apply transform to. 
+        If tranforming input channels, then the channel_indices will be [0,1] if only working with one variable + orography, otherwise it will be [0,1,2,...]
+        If transforming target channels, then the channel_indices will be [0] always.
+        """
+        self.mode = mode
+        self.channel_indices = channel_indices
+        self.stats = stats
+
+        if mode == "standard":
+            self.mean = stats['mean'].values
+            self.std = stats['std'].values
+        elif mode == "minmax":
+            self.min = stats['min'].values
+            self.max = stats['max'].values
+        else:
+            raise ValueError("mode must be 'standard' or 'minmax'")
+
+    def __call__(self, x):
+            if x.ndim == 4:  # Batched input [B, C, H, W]
+                return torch.stack([self._transform_single(xi.clone()) for xi in x])
+            return self._transform_single(x)
+
+    def inverse(self, x):
+        if x.ndim == 4:  # Batched input [B, C, H, W]
+            return torch.stack([self._inverse_single(xi.clone()) for xi in x])
+        return self._inverse_single(x)
+
+    def _transform_single(self, x):
+        C = x.shape[0]
+        indices = self.channel_indices or range(C)
+        for i in indices:
+            if self.mode == "standard":
+                x[i] = (x[i] - self.mean[i]) / (self.std[i] + 1e-8)
+            elif self.mode == "minmax":
+                x[i] = (x[i] - self.min[i]) / (self.max[i] - self.min[i] + 1e-8)
+        return x
+
+    def _inverse_single(self, x):
+        C = x.shape[0]
+        indices = self.channel_indices or range(C)
+        for i in indices:
+            if self.mode == "standard":
+                x[i] = x[i] * self.std[i] + self.mean[i]
+            elif self.mode == "minmax":
+                x[i] = x[i] * (self.max[i] - self.min[i]) + self.min[i]
+        return x
+    
 class nowcast_dataset(Dataset):
     def __init__(self,zarr_store, variable, dates_range, input_window_size, output_window_size, freq,mask,
                  missing_times=None, mode='train',data_seed=42):
@@ -117,8 +171,8 @@ class nowcast_dataset(Dataset):
         target_tensor = np.where(self.mask, target_tensor, 0)
 
         # Convert to torch tensors
-        input_tensor = torch.tensor(input_tensor, dtype=torch.float32)
-        target_tensor = torch.tensor(target_tensor, dtype=torch.float32)
+        input_tensor = torch.tensor(input_tensor, dtype=torch.float32)  # [C, H, W]
+        target_tensor = torch.tensor(target_tensor, dtype=torch.float32)    # [C, H, W]
 
         return input_tensor, target_tensor, str(in_sample[0]), str(out_sample[0])
 
@@ -127,6 +181,7 @@ if __name__ == "__main__":
     # %%
     zarr_store = 'data/NYSM.zarr'
     mask = xr.open_dataset('mask_2d.nc').mask
+    RTMA_stats = xr.open_dataset('RTMA_variable_stats.nc')
     dates_range = ['2018-01-01T00:00:00', '2023-12-31T23:59:59']
     freq = '5min'
     input_window_size = 36  # 3 hours at every 5 minutes
