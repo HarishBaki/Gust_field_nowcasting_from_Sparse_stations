@@ -4,10 +4,12 @@ import numpy as np
 
 # %%
 orography = xr.open_dataset('orography.nc').orog
-zarr_store = 'data/RTMA.zarr'
-dates_range = ['2018-01-01T00','2021-12-31T23']
-variables = ['i10fg', 'si10','t2m','sh2','d2m','sp']
+zarr_store = 'data/NYSM.zarr'
+dates_range = ['2019-01-01T00','2022-12-31T23']
+variables = ['i10fg']
+mask = xr.open_dataset('mask_2d.nc').mask
 
+# %%
 # Dictionary to hold results
 stats = {'mean': {}, 'std': {}, 'min': {}, 'max': {}}
 
@@ -15,6 +17,7 @@ stats = {'mean': {}, 'std': {}, 'min': {}, 'max': {}}
 for variable in variables:
     ds = xr.open_zarr(zarr_store)[variable]
     ds = ds.sel(time=slice(dates_range[0], dates_range[1]))
+    ds = ds.where(mask,0)
     
     print(f"Processing {variable} with {len(ds.time)} samples")
     mean = ds.mean(dim=['time', 'y', 'x'])
