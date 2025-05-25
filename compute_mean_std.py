@@ -71,6 +71,6 @@ stats_ds = xr.Dataset({
 
 # %%
 # Save to NetCDF
-stats_ds.to_netcdf('RTMA_variable_stats.nc')
+stats_ds.to_netcdf('NYSM_variable_stats.nc')
 print("Saved variable stats to RTMA_variable_stats.nc")
 # %%
