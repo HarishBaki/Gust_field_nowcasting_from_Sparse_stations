@@ -207,7 +207,7 @@ if __name__ == "__main__":
     
     # %%
     zarr_store = 'data/NYSM.zarr'
-    train_val_dates_range = ['2018-01-01T00:00:00', '2022-12-31T23:59:59']
+    train_val_dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
     freq = '5min'
     input_window_size = 36  # 3 hours at every 5 minutes
     output_window_size = 12  # 1 hour at every 5 minutes
@@ -382,8 +382,8 @@ if __name__ == "__main__":
             name=f"{model_name}_{input_window_size}_steps_in_to_{output_window_size}_steps_out",
             dir="wandb_logs"
         )
-
     '''
+    # %%
     # === Checking the data loading bottle neck ===
     print(f"🧪 [Rank {rank}] Testing DataLoader...")
     loader_start = time.time()
@@ -405,7 +405,7 @@ if __name__ == "__main__":
     loader_end = time.time()
     print(f"✅ [Rank {rank}] Completed in {loader_end - loader_start:.2f} seconds.")
     '''
-    
+    # %%
     # === Run the training and validation ===
     if not dist.is_initialized() or dist.get_rank() == 0:
         print("Starting training and validation...")
@@ -425,6 +425,7 @@ if __name__ == "__main__":
         target_transform=target_transform,
         resume=resume
     )
+    # %%
     # === Barrier to ensure all ranks wait for checkpoint ===
     if dist.is_initialized():
         dist.barrier()

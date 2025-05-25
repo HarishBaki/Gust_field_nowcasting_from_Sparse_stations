@@ -1,0 +1,1 @@
+rclone copy --progress --transfers 12 data/NYSM.zarr hb533188_dgxhead:/network/rit/dgx/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/data/NYSM.zarr
