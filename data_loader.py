@@ -16,53 +16,43 @@ class Transform:
         stats: 
             if mode == 'standard': {'mean': [...], 'std': [...]}
             if mode == 'minmax': {'min': [...], 'max': [...]}
-        channel_indices: list of channel indices to apply transform to. 
-        If tranforming input channels, then the channel_indices will be [0,1] if only working with one variable + orography, otherwise it will be [0,1,2,...]
-        If transforming target channels, then the channel_indices will be [0] always.
         """
         self.mode = mode
-        self.stats = stats
-
         if mode == "standard":
-            self.mean = torch.tensor(stats['mean'].values, dtype=torch.float32)
-            self.std = torch.tensor(stats['std'].values, dtype=torch.float32)
+            self.param1 = torch.tensor(stats['mean'].values, dtype=torch.float32)  # mean
+            self.param2 = torch.tensor(stats['std'].values, dtype=torch.float32)   # std
         elif mode == "minmax":
-            self.min = torch.tensor(stats['min'].values, dtype=torch.float32)
-            self.max = torch.tensor(stats['max'].values, dtype=torch.float32)
+            self.param1 = torch.tensor(stats['min'].values, dtype=torch.float32)   # min
+            self.param2 = torch.tensor(stats['max'].values, dtype=torch.float32)   # max
         else:
             raise ValueError("mode must be 'standard' or 'minmax'")
 
+    def _reshape_params(self, x):
+        """
+        Reshapes the parameters for broadcasting, based on input dimensions.
+        """
+        stats_shape = [1, -1] + [1] * (x.ndim - 2)
+        p1 = self.param1.reshape(stats_shape).to(x.device)
+        p2 = self.param2.reshape(stats_shape).to(x.device)
+        return p1, p2
+
     def __call__(self, x):
-        # For now, the input are assumed to be [B,T,H,W]
-        # In the future, we may include other variables, so the input will be [B,C,T,H,W]
-        # In the latter case, we will normalize/standardize across the channels. 
-        device = x.device
-        stats_shape = [1,-1] + [1]*(x.ndim - 2)
+        p1, p2 = self._reshape_params(x)
         if self.mode == "standard":
-            mean_ = np.reshape(self.mean,stats_shape)
-            std_ = np.reshape(self.std,stats_shape)
-            x = (x - mean_) / (std_ + 1e-8)
+            return (x - p1) / (p2 + 1e-8)
         elif self.mode == "minmax":
-            min_ = np.reshape(self.min,stats_shape)
-            max_ = np.reshape(self.max,stats_shape)
-            x = (x - min) / (max - min + 1e-8)
-        return x
+            return (x - p1) / (p2 - p1 + 1e-8)
 
     def inverse(self, x):
-        stats_shape = [1,-1] + [1]*(x.ndim - 2)
+        p1, p2 = self._reshape_params(x)
         if self.mode == "standard":
-            mean_ = np.reshape(self.mean,stats_shape)
-            std_ = np.reshape(self.std,stats_shape)
-            x = x * std_ + mean_
+            return x * p2 + p1
         elif self.mode == "minmax":
-            min_ = np.reshape(self.min,stats_shape)
-            max_ = np.reshape(self.max,stats_shape)
-            x = x * (max_ - min_) + min_
-        return x
+            return x * (p2 - p1) + p1
     
 class nowcast_dataset(Dataset):
-    def __init__(self,zarr_store, variable, dates_range, input_window_size, output_window_size, freq,mask,
-                 missing_times=None, mode='train',data_seed=42,input_transform=None, target_transform=None):
+    def __init__(self,zarr_store, variable, dates_range, input_window_size, output_window_size, freq,
+                 missing_times=None, mode='train',data_seed=42):
         # create a pandas timetime index for the entire training and validation period
         # This will be used to create the input and output samples
         # Unlike the Sparse_to_Dense model, we cannot eliminate the missint instances directly, since we will be dealing with forecasting.
@@ -149,7 +139,6 @@ class nowcast_dataset(Dataset):
         self.filtered_in_samples = filtered_in_samples
         self.filtered_out_samples = filtered_out_samples
         self.ds = ds
-        self.mask = mask
 
     def __len__(self):
         return len(self.filtered_in_samples)
@@ -167,32 +156,38 @@ class nowcast_dataset(Dataset):
         input_tensor = torch.tensor(input_tensor, dtype=torch.float32)  # [C, H, W]
         target_tensor = torch.tensor(target_tensor, dtype=torch.float32)    # [C, H, W]
 
-        # Apply mask
-        input_tensor = torch.where(self.mask, input_tensor, 0)
-        target_tensor = torch.where(self.mask, target_tensor, 0)
-
-        # Apply transformations if provided
-        if self.input_transform is not None:
-            input_tensor = self.input_transform(input_tensor)
-        if self.target_transform is not None:
-            target_tensor = self.target_transform(target_tensor)
-
         return input_tensor, target_tensor, str(in_sample[0]), str(out_sample[0])
 
 # %%
 if __name__ == "__main__":
     # %%
     zarr_store = 'data/NYSM.zarr'
-    mask = xr.open_dataset('mask_2d.nc').mask
     variable = 'i10fg'
     dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
     freq = '5min'
-    input_window_size = 36  # 3 hours at every 5 minutes
-    output_window_size = 12  # 1 hour at every 5 minutes
+    input_window_size = 2  # 3 hours at every 5 minutes
+    output_window_size = 1  # 1 hour at every 5 minutes
     data_seed = 42
     mode = 'train'
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
+
+    # %%
+    # Checking data loader with transform
+    mask = xr.open_dataset('mask_2d.nc').mask
+    mask_tensor = torch.tensor(mask.values).to(device)
+    NYSM_stats = xr.open_dataset('NYSM_variable_stats.nc')
+    input_stats = NYSM_stats.sel(variable=[variable])
+    target_stats = NYSM_stats.sel(variable=[variable])
+    # Standardization
+    input_transform = Transform(
+        mode="minmax",  # 'standard' or 'minmax'
+        stats=input_stats
+    )
+    target_transform = Transform(
+        mode="minmax",  # 'standard' or 'minmax'
+        stats=target_stats
+    )
 
     # %%
     # Checking data loader without transform
@@ -203,19 +198,16 @@ if __name__ == "__main__":
         input_window_size,
         output_window_size,
         freq,
-        mask,
         missing_times=None,
         mode=mode,
         data_seed=data_seed,
-        input_transform=None,
-        target_transform=None
         )
 
     dataloader = DataLoader(dataset, batch_size=2, shuffle=True,num_workers=2, pin_memory=True)
-
+    # %%
     iterator = iter(dataloader)
     # Example usage
-    for b in range(3):
+    for b in range(1):
         start_time = time.time()
         batch = next(iterator, None)
 
@@ -230,83 +222,45 @@ if __name__ == "__main__":
             print("Input time instances:", input_time_instances)
             print("Target time instances:", target_time_instances)
 
+            print('Input and target tensors without transform and before applying mask:')
             for i in range(input_tensor.shape[1]):
                 print(f"Input Channel {i} ➜ max: {input_tensor[0, i].max().item():.4f}, min: {input_tensor[0, i].min().item():.4f}")
             for i in range(target_tensor.shape[1]):
                 print(f"Target Channel {i} ➜ max: {target_tensor[0, i].max().item():.4f}, min: {target_tensor[0, i].min().item():.4f}")
             
-        else:
-            print(f"Batch {b+1}: No data in this batch.")
-        
-        end_time = time.time()
-        print(f" DataLoader iteration time: {end_time - start_time:.2f} seconds")
+            # Transform input and target
+            input_tensor = input_transform(input_tensor)
+            target_tensor = target_transform(target_tensor)
 
-    # %%
-    # Checking data loader with transform
-    NYSM_stats = xr.open_dataset('NYSM_variable_stats.nc')
-    input_stats = NYSM_stats.sel(variable=[variable])
-    target_stats = NYSM_stats.sel(variable=[variable])
-    # Standardization
-    input_transform = Transform(
-        mode="standard",  # 'standard' or 'minmax'
-        stats=input_stats
-    )
-    target_transform = Transform(
-        mode="standard",  # 'standard' or 'minmax'
-        stats=target_stats
-    )
+            # Apply mask
+            input_tensor = torch.where(mask_tensor, input_tensor, 0)
+            target_tensor = torch.where(mask_tensor, target_tensor, 0)
 
-    dataset = nowcast_dataset(
-        zarr_store,
-        'i10fg',
-        dates_range,
-        input_window_size,
-        output_window_size,
-        freq,
-        mask,
-        missing_times=None,
-        mode=mode,
-        data_seed=data_seed,
-        input_transform=input_transform,
-        target_transform=target_transform
-        )
-
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True,num_workers=2, pin_memory=True)
-    # %%
-    iterator = iter(dataloader)
-    # Example usage
-    for b in range(3):
-        start_time = time.time()
-        batch = next(iterator, None)
-
-        if batch is not None:
-            input_tensor, target_tensor, input_time_instances, target_time_instances = batch
-            input_tensor = input_tensor.to(device)
-            target_tensor = target_tensor.to(device)
-            
-            print(f"\n Batch {b+1}")
-            print("Input tensor shape:", input_tensor.shape)
-            print("Target tensor shape:", target_tensor.shape)
-            print("Input time instances:", input_time_instances)
-            print("Target time instances:", target_time_instances)
-
+            print('Input and target tensors after transform and mask:')
             for i in range(input_tensor.shape[1]):
                 print(f"Input Channel {i} ➜ max: {input_tensor[0, i].max().item():.4f}, min: {input_tensor[0, i].min().item():.4f}")
             for i in range(target_tensor.shape[1]):
                 print(f"Target Channel {i} ➜ max: {target_tensor[0, i].max().item():.4f}, min: {target_tensor[0, i].min().item():.4f}")
             
             # Inverse transform for input and target
-            input_tensor_inv = input_transform.inverse(input_tensor)     # shape: [B, 36, y, x]
-            target_tensor_inv = target_transform.inverse(target_tensor)  # shape: [B, 12, y, x]
-            print("Inverse transformed tensors shapes:", input_tensor_inv.shape, target_tensor_inv.shape)
+            input_tensor = input_transform.inverse(input_tensor)
+            target_tensor = target_transform.inverse(target_tensor)
+
+            # Apply mask
+            input_tensor = torch.where(mask_tensor, input_tensor, 0)
+            target_tensor = torch.where(mask_tensor, target_tensor, 0)
+
+            print("Inverse transformed tensors shapes:", input_tensor.shape, target_tensor.shape)
+            print('Inverse transformed and masked input and target tensors:')
             for i in range(input_tensor.shape[1]):
-                print(f"Inverse Input Channel 0 ➜ max: {input_tensor_inv[0][i].max().item():.4f}, min: {input_tensor_inv[0][i].min().item():.4f}")
+                print(f"Inverse Input Channel 0 ➜ max: {input_tensor[0][i].max().item():.4f}, min: {input_tensor[0][i].min().item():.4f}")
             for i in range(target_tensor.shape[1]):
-                print(f"Inverse Target Channel 0 ➜ max: {target_tensor_inv[0][i].max().item():.4f}, min: {target_tensor_inv[0][i].min().item():.4f}")
+                print(f"Inverse Target Channel 0 ➜ max: {target_tensor[0][i].max().item():.4f}, min: {target_tensor[0][i].min().item():.4f}")
 
         else:
             print(f"Batch {b+1}: No data in this batch.")
         
         end_time = time.time()
         print(f" DataLoader iteration time: {end_time - start_time:.2f} seconds")
+
 # %%
