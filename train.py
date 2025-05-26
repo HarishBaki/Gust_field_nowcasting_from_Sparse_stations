@@ -22,7 +22,7 @@ import os
 import wandb, argparse, sys
 from tqdm import tqdm
 
-from data_loader import nowcast_dataset
+from data_loader import nowcast_dataset, Transform
 from models.Google_Unet import GoogleUNet
 from models.Deep_CNN import DCNN
 from models.UNet import UNet
@@ -35,7 +35,7 @@ from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_mo
 
 # %%
 def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, metric, device, num_epochs,
-               checkpoint_dir, train_sampler, scheduler, early_stopping, target_transform=None,resume=False):
+               checkpoint_dir, train_sampler, scheduler, early_stopping, mask_tensor,input_transform=None,target_transform=None,resume=False):
 
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -62,6 +62,12 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             input_tensor, target_tensor,_,_ = batch
             input_tensor = input_tensor.to(device, non_blocking=True)   # [B, C, H, W]
             target_tensor = target_tensor.to(device, non_blocking=True)    # [B, C, H, W]
+
+            # Transform input and target
+            if input_transform is not None:
+                input_tensor = input_transform(input_tensor)
+                target_tensor = target_transform(target_tensor)
+
             #end_time = time.time()
             #print(f"[Batch {batch_idx}] Data load time: {end_time - start_time:.4f} seconds")
             # Break early to test
@@ -69,8 +75,8 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             #    break
 
             optimizer.zero_grad()
-            output = model(input_tensor)
-            loss = criterion(output, target_tensor)
+            output = model(torch.where(mask_tensor, input_tensor, 0))
+            loss = criterion(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
             loss.backward()
             optimizer.step()
 
@@ -82,7 +88,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                 target_tensor = target_transform.inverse(target_tensor)
 
             # Compute the metric
-            metric_value = metric(output, target_tensor)
+            metric_value = metric(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
             train_metric_total += metric_value.item()
 
             if show_progress:
@@ -102,8 +108,13 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                 input_tensor = input_tensor.to(device, non_blocking=True)
                 target_tensor = target_tensor.to(device, non_blocking=True)
 
-                output = model(input_tensor)
-                loss = criterion(output, target_tensor)
+                # Transform input and target
+                if input_transform is not None:
+                    input_tensor = input_transform(input_tensor)
+                    target_tensor = target_transform(target_tensor)
+
+                output = model(torch.where(mask_tensor, input_tensor, 0))
+                loss = criterion(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
                 val_loss_total += loss.item()
 
                 # === Optional: Apply inverse transform if needed ===
@@ -112,7 +123,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                     target_tensor = target_transform.inverse(target_tensor)
                 
                 # Compute the metric
-                metric_value = metric(output, target_tensor)
+                metric_value = metric(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
                 val_metric_total += metric_value.item()
 
                 if show_progress:
@@ -165,15 +176,16 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
 if __name__ == "__main__":
 
     # %%
+    variable = 'i10fg'  # Input variable to predict
     checkpoint_dir = 'checkpoints'
     model_name = 'UNet'
     activation_layer = 'gelu'
+    transform = 'minmax'  # 'standard' or 'minmax'
     batch_size = 16
     num_workers = 16
     weights_seed = 42
     num_epochs = 200
     loss_name = 'MaskedCharbonnierLoss'
-    target_transform = None
     resume = False
     
     # %%
@@ -203,28 +215,37 @@ if __name__ == "__main__":
     orography = orography.orog.values
 
     mask = xr.open_dataset('mask_2d.nc').mask
-    mask_tensor = torch.tensor(mask.values.astype(np.float32), device=device)  # [H, W], defnitely send it to device
+    mask_tensor = torch.tensor(mask.values, device=device)  # [H, W], defnitely send it to device
     
     # %%
     zarr_store = 'data/NYSM.zarr'
     train_val_dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
     freq = '5min'
-    input_window_size = 36  # 3 hours at every 5 minutes
-    output_window_size = 12  # 1 hour at every 5 minutes
+    input_window_size = 2  # 3 hours at every 5 minutes
+    output_window_size = 1  # 1 hour at every 5 minutes
     data_seed = 42
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+
+    NYSM_stats = xr.open_dataset('NYSM_variable_stats.nc')
+    input_stats = NYSM_stats.sel(variable=[variable])
+    target_stats = NYSM_stats.sel(variable=[variable])
+    # Standardization
+    input_transform = Transform(
+        mode=transform,  # 'standard' or 'minmax'
+        stats=input_stats
+    )
+    target_transform = Transform(
+        mode=transform,  # 'standard' or 'minmax'
+        stats=target_stats
+    )
 
     mode = 'train'
     train_dataset = nowcast_dataset(
         zarr_store,
-        'i10fg',
+        variable,
         train_val_dates_range,
         input_window_size,
         output_window_size,
         freq,
-        mask,
         missing_times=None,
         mode=mode,
         data_seed=data_seed
@@ -247,12 +268,11 @@ if __name__ == "__main__":
     mode = 'val'
     validation_dataset = nowcast_dataset(
         zarr_store,
-        'i10fg',
+        variable,
         train_val_dates_range,
         input_window_size,
         output_window_size,
         freq,
-        mask,
         missing_times=None,
         mode=mode,
         data_seed=data_seed
@@ -422,6 +442,8 @@ if __name__ == "__main__":
         train_sampler=train_sampler, 
         scheduler=scheduler,
         early_stopping=early_stopping,
+        mask_tensor=mask_tensor,
+        input_transform=input_transform,
         target_transform=target_transform,
         resume=resume
     )
