@@ -180,13 +180,13 @@ if __name__ == "__main__":
     checkpoint_dir = 'checkpoints'
     model_name = 'UNet'
     activation_layer = 'gelu'
-    transform = 'minmax'  # 'standard' or 'minmax'
+    transform = 'standard'  # 'standard' or 'minmax'
     batch_size = 16
     num_workers = 16
     weights_seed = 42
     num_epochs = 200
     loss_name = 'MaskedCharbonnierLoss'
-    resume = False
+    resume = True
     
     # %%
     # ==================== Distributed setup ====================
