@@ -29,7 +29,7 @@ from models.UNet import UNet
 from models.SwinT2_UNet import SwinT2UNet
 from models.util import initialize_weights_xavier,initialize_weights_he
 
-from losses import MaskedMSELoss, MaskedRMSELoss, MaskedTVLoss, MaskedCharbonnierLoss
+from losses import MaskedMSELoss, MaskedRMSELoss, MaskedTVLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
 
 from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store
 
@@ -178,15 +178,22 @@ if __name__ == "__main__":
     # %%
     variable = 'i10fg'  # Input variable to predict
     checkpoint_dir = 'checkpoints'
-    model_name = 'UNet'
+    model_name = 'SwinT2UNet'  # 'DCNN', 'UNet', 'SwinT2UNet', 'GoogleUNet'
     activation_layer = 'gelu'
     transform = 'standard'  # 'standard' or 'minmax'
     batch_size = 16
     num_workers = 16
     weights_seed = 42
-    num_epochs = 200
-    loss_name = 'MaskedCharbonnierLoss'
-    resume = True
+    num_epochs = 1
+    loss_name = 'MaskedCombinedMAEQuantileLoss'
+    resume = False
+    input_window_size = 12  # 3 hours at every 5 minutes
+    output_window_size = 6  # 1 hour at every 5 minutes
+
+    checkpoint_dir = f"{checkpoint_dir}/{model_name}"
+    checkpoint_dir = f"{checkpoint_dir}/{loss_name}"
+    checkpoint_dir =  f"{checkpoint_dir}/in_window-{input_window_size}_out_window-{output_window_size}"
+    os.makedirs(checkpoint_dir, exist_ok=True)
     
     # %%
     # ==================== Distributed setup ====================
@@ -221,8 +228,6 @@ if __name__ == "__main__":
     zarr_store = 'data/NYSM.zarr'
     train_val_dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
     freq = '5min'
-    input_window_size = 2  # 3 hours at every 5 minutes
-    output_window_size = 1  # 1 hour at every 5 minutes
     data_seed = 42
 
     NYSM_stats = xr.open_dataset('NYSM_variable_stats.nc')
@@ -375,6 +380,8 @@ if __name__ == "__main__":
         criterion = MaskedTVLoss(mask_tensor,tv_loss_weight=0.001, beta=0.5)    
     elif loss_name == "MaskedCharbonnierLoss":
         criterion = MaskedCharbonnierLoss(mask_tensor,eps=1e-3)
+    elif loss_name == "MaskedCombinedMAEQuantileLoss":
+        criterion = MaskedCombinedMAEQuantileLoss(mask_tensor, tau=0.95, mae_weight=0.5, quantile_weight=0.5)
     metric = MaskedRMSELoss(mask_tensor)
 
     # === Optimizer, scheduler, and early stopping ===
