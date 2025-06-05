@@ -33,8 +33,7 @@ class MaskedMSELoss(nn.Module):
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
 
         # Apply valid mask (inside NY, not at stations)
-        valid_mask = (mask == 1)    # [1, 1, H, W]
-        valid_mask = valid_mask.float()
+        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
 
         # Compute per-sample MSE
         se = (output - target) ** 2
@@ -78,8 +77,7 @@ class MaskedRMSELoss(nn.Module):
         B, _, H, W = output.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
 
-        valid_mask = (mask == 1)  # [1,1,H,W]
-        valid_mask = valid_mask.float()
+        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
 
         se = (output - target) ** 2
         masked_se = se * valid_mask
@@ -113,15 +111,14 @@ class MaskedTVLoss(nn.Module):
         self.tv_loss_weight = tv_loss_weight
         self.beta = beta
 
-    def forward(self, x, station_mask):
+    def forward(self, x):
         """
         x: [B, 1, H, W] (predicted field)
         station_mask: [B, 1, H, W]  (1=station, 0=else)
         """
         B, _, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        station_mask = station_mask.float()     # [B, 1, H, W]
-        valid_mask = (mask == 1) & (station_mask == 0)       # [B, 1, H, W]
+        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
 
         # Horizontal and vertical TV only for valid locations
         dh = (x[:, :, :, 1:] - x[:, :, :, :-1]).abs() ** self.beta  # [B, 1, H, W-1]
@@ -157,13 +154,12 @@ class MaskedCharbonnierLoss(nn.Module):
         """
         B, _, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        valid_mask = (mask == 1)       # [1, 1, H, W]
-        valid_mask = valid_mask.float()
+        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
 
         diff = x - y
         charbonnier = torch.sqrt(diff**2 + self.eps**2)
         masked_charb = charbonnier * valid_mask
-        loss = masked_charb.sum() / (valid_mask.expand_as(masked_charb).sum().clamp(min=1.0))   # This is critical correction, it broadcasts the mean over batches. 
+        loss = masked_charb.sum() / (valid_mask.sum().clamp(min=1.0))   # This is critical correction, it broadcasts the mean over batches. 
         return loss
 
 class MaskedPSNR(nn.Module):
@@ -178,7 +174,7 @@ class MaskedPSNR(nn.Module):
         super().__init__()
         self.register_buffer("mask_2d", mask_2d.float())   # persists on .cuda()/.cpu(), such that the mask_2d devie is used.
 
-    def forward(self, x, y, station_mask,reduction='elementwise_mean'):
+    def forward(self, x, y,reduction='elementwise_mean'):
         """
         x: [B, 1, H, W] (prediction)
         y: [B, 1, H, W] (target)
@@ -186,8 +182,7 @@ class MaskedPSNR(nn.Module):
         """
         B, _, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        station_mask = station_mask.float()     # [B, 1, H, W]
-        valid_mask = (mask == 1) & (station_mask == 0)       # [B, 1, H, W]
+        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
 
         x = x * valid_mask
         y = y * valid_mask
@@ -211,7 +206,7 @@ class MaskedSSIM(nn.Module):
         super().__init__()
         self.register_buffer("mask_2d", mask_2d.float())   # persists on .cuda()/.cpu(), such that the mask_2d devie is used.
 
-    def forward(self, x, y, station_mask,reduction='elementwise_mean'):
+    def forward(self, x, y,reduction='elementwise_mean'):
         """
         x: [B, 1, H, W] (prediction)
         y: [B, 1, H, W] (target)
@@ -219,8 +214,7 @@ class MaskedSSIM(nn.Module):
         """
         B, _, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        station_mask = station_mask.float()     # [B, 1, H, W]
-        valid_mask = (mask == 1) & (station_mask == 0)       # [B, 1, H, W]
+        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
 
         x = x * valid_mask
         y = y * valid_mask
@@ -231,3 +225,58 @@ class MaskedSSIM(nn.Module):
 
         ssim = StructuralSimilarityIndexMeasure(reduction=reduction,data_range=data_range)
         return ssim(x, y)
+
+class MaskedCombinedMAEQuantileLoss(nn.Module):
+    """
+    Combined masked loss: MAE and Quantile Loss (e.g., 95th percentile) for 2D spatial maps
+    Applies masking to exclude station locations and non-domain regions.
+    """
+    def __init__(self, mask_2d, tau=0.95, mae_weight=0.5, quantile_weight=0.5):
+        """
+        mask_2d: torch.Tensor of shape [H, W], NY domain mask
+        tau: quantile level (e.g., 0.95)
+        """
+        super().__init__()
+        self.register_buffer("mask_2d", mask_2d.float())
+        self.tau = tau
+        self.mae_weight = mae_weight
+        self.quantile_weight = quantile_weight
+
+    def forward(self, output, target, reduction='mean'):
+        """
+        output: [B, 1, H, W]
+        target: [B, 1, H, W]
+        station_mask: [B, 1, H, W]
+        reduction: 'none', 'mean', or 'global'
+        """
+        assert reduction in ['mean', 'none', 'global']
+        B, _, H, W = output.shape
+
+        mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+
+        abs_error = torch.abs(output - target)
+        error = target - output
+        quantile_error = torch.max(self.tau * error, (self.tau - 1) * error)
+
+        mae_masked = abs_error * valid_mask
+        quantile_masked = quantile_error * valid_mask
+
+        mae_sum_per_sample = mae_masked.view(B, -1).sum(dim=1)
+        quantile_sum_per_sample = quantile_masked.view(B, -1).sum(dim=1)
+        valid_counts = valid_mask.view(B, -1).sum(dim=1).clamp(min=1.0)  # [B]
+
+        mae_per_sample = mae_sum_per_sample / valid_counts
+        quantile_per_sample = quantile_sum_per_sample / valid_counts
+
+        combined_per_sample = self.mae_weight * mae_per_sample + self.quantile_weight * quantile_per_sample
+
+        if reduction == 'none':
+            return combined_per_sample  # [B]
+        elif reduction == 'mean':
+            return combined_per_sample.mean()  # scalar
+        elif reduction == 'global':
+            total_mae = mae_sum_per_sample.sum()
+            total_qtl = quantile_sum_per_sample.sum()
+            total_count = valid_counts.sum().clamp(min=1.0)
+            return (self.mae_weight * total_mae + self.quantile_weight * total_qtl) / total_count  # scalar
