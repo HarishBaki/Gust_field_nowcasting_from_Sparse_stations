@@ -163,7 +163,7 @@ class MaskedCharbonnierLoss(nn.Module):
         diff = x - y
         charbonnier = torch.sqrt(diff**2 + self.eps**2)
         masked_charb = charbonnier * valid_mask
-        loss = masked_charb.sum() / valid_mask.sum().clamp(min=1.0)
+        loss = masked_charb.sum() / (valid_mask.expand_as(masked_charb).sum().clamp(min=1.0))   # This is critical correction, it broadcasts the mean over batches. 
         return loss
 
 class MaskedPSNR(nn.Module):
