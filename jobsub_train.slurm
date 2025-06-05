@@ -4,9 +4,9 @@
 #SBATCH --output=slurmout/ddp_train-%j.out
 #SBATCH --error=slurmout/ddp_train-%j.err
 #SBATCH --time=07-00:00:00
-#SBATCH --mem=640gb
+#SBATCH --mem=320gb
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --exclude=dgx02
@@ -23,7 +23,61 @@ export nproc_per_node=${SLURM_NTASKS_PER_NODE}
 export num_workers=${SLURM_CPUS_PER_TASK}
 export MASTER_PORT=$((20000 + RANDOM % 20000))
 
+# ===============================
+# Set defaults if not provided
+# ===============================
+variable=${variable:-'i10fg'}
+checkpoint_dir=${checkpoint_dir:-'checkpoints'}
+model_name=${model_name:-'SwinT2UNet'}
+activation_layer=${activation_layer:-'gelu'}
+transform=${transform:-'standard'}
+batch_size=${batch_size:-16}
+num_workers=${num_workers:-16}
+weights_seed=${weights_seed:-42}
+num_epochs=${num_epochs:-200}
+loss_name=${loss_name:-'MaskedCombinedMAEQuantileLoss'}
+resume=${resume:-'false'}
+input_window_size=${input_window_size:-6}
+output_window_size=${output_window_size:-3}
+
+# ===============================
+# Echo all config values
+# ===============================
+echo "======================================"
+echo "Launching training with configuration:"
+echo "--------------------------------------"
+echo "Variable:                 $variable"
+echo "Checkpoint Dir:           $checkpoint_dir"
+echo "Model:                    $model_name"
+echo "Activation Layer:         $activation_layer"
+echo "Transform:                $transform"
+echo "Batch Size:               $batch_size"
+echo "Num Workers:              $num_workers"
+echo "Weights Seed:             $weights_seed"
+echo "Num Epochs:               $num_epochs"
+echo "Loss Function:            $loss_name"
+echo "Resume from Checkpoint:   $resume"
+echo "Input Window Size:        $input_window_size"
+echo "Output Window Size:       $output_window_size"
+echo "======================================"
+
 # Install required Python packages inside the container
 pip install --quiet torchmetrics
 
-torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train.py
+# ===============================
+# Run the training script
+# ===============================
+torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train.py \
+  --variable "$variable" \
+  --checkpoint_dir "$checkpoint_dir" \
+  --model_name "$model_name" \
+  --activation_layer "$activation_layer" \
+  --transform "$transform" \
+  --batch_size "$batch_size" \
+  --num_workers "$num_workers" \
+  --weights_seed "$weights_seed" \
+  --num_epochs "$num_epochs" \
+  --loss_name "$loss_name" \
+  --input_window_size "$input_window_size" \
+  --output_window_size "$output_window_size" \
+  $( [ "$resume" = "true" ] && echo "--resume" )

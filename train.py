@@ -184,11 +184,42 @@ if __name__ == "__main__":
     batch_size = 16
     num_workers = 16
     weights_seed = 42
-    num_epochs = 1
+    num_epochs = 200
     loss_name = 'MaskedCombinedMAEQuantileLoss'
     resume = False
-    input_window_size = 12  # 3 hours at every 5 minutes
-    output_window_size = 6  # 1 hour at every 5 minutes
+    input_window_size = 6  # 3 hours at every 5 minutes
+    output_window_size = 3  # 1 hour at every 5 minutes
+
+    parser = argparse.ArgumentParser(description="Training configuration for wind prediction model")
+    parser.add_argument('--variable', type=str, default='i10fg', help='Input variable to predict')
+    parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
+    parser.add_argument('--model_name', type=str, default='SwinT2UNet', choices=['DCNN', 'UNet', 'SwinT2UNet', 'GoogleUNet'], help='Model to use')
+    parser.add_argument('--activation_layer', type=str, default='gelu', help='Activation function')
+    parser.add_argument('--transform', type=str, default='standard', choices=['standard', 'minmax'], help='Data transformation type')
+    parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
+    parser.add_argument('--num_workers', type=int, default=16, help='Number of workers for data loading')
+    parser.add_argument('--weights_seed', type=int, default=42, help='Random seed for weight initialization')
+    parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
+    parser.add_argument('--loss_name', type=str, default='MaskedCombinedMAEQuantileLoss', help='Loss function name')
+    parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
+    parser.add_argument('--input_window_size', type=int, default=6, help='Input window size (number of timesteps)')
+    parser.add_argument('--output_window_size', type=int, default=3, help='Output window size (number of timesteps)')
+    args, unknown = parser.parse_known_args()
+
+    # Update variables from parsed arguments
+    variable = args.variable
+    checkpoint_dir = args.checkpoint_dir
+    model_name = args.model_name
+    activation_layer = args.activation_layer
+    transform = args.transform
+    batch_size = args.batch_size
+    num_workers = args.num_workers
+    weights_seed = args.weights_seed
+    num_epochs = args.num_epochs
+    loss_name = args.loss_name
+    resume = args.resume
+    input_window_size = args.input_window_size
+    output_window_size = args.output_window_size
 
     checkpoint_dir = f"{checkpoint_dir}/{model_name}"
     checkpoint_dir = f"{checkpoint_dir}/{loss_name}"
