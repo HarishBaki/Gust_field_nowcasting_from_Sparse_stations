@@ -176,20 +176,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
 if __name__ == "__main__":
 
     # %%
-    variable = 'i10fg'  # Input variable to predict
-    checkpoint_dir = 'checkpoints'
-    model_name = 'SwinT2UNet'  # 'DCNN', 'UNet', 'SwinT2UNet', 'GoogleUNet'
-    activation_layer = 'gelu'
-    transform = 'standard'  # 'standard' or 'minmax'
-    batch_size = 16
-    num_workers = 16
-    weights_seed = 42
-    num_epochs = 200
-    loss_name = 'MaskedCombinedMAEQuantileLoss'
-    resume = False
-    input_window_size = 6  # 3 hours at every 5 minutes
-    output_window_size = 3  # 1 hour at every 5 minutes
-
+    # === Argument parsing ===
     parser = argparse.ArgumentParser(description="Training configuration for wind prediction model")
     parser.add_argument('--variable', type=str, default='i10fg', help='Input variable to predict')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
