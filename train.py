@@ -423,8 +423,9 @@ if __name__ == "__main__":
                 "input_window_size": input_window_size,
                 "output_window_size": output_window_size,
                 "train_val_dates_range": train_val_dates_range,
+                "transform": transform,
             },
-            name=f"{model_name}_{input_window_size}_steps_in_to_{output_window_size}_steps_out",
+            name=checkpoint_dir[len('checkpoints/'):].replace('/','_'),
             dir="wandb_logs"
         )
     '''
