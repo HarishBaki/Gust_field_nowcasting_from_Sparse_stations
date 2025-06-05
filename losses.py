@@ -29,18 +29,18 @@ class MaskedMSELoss(nn.Module):
         station_mask: [B, 1, H, W]
         """
         assert reduction in ['none', 'mean', 'global']
-        B, _, H, W = output.shape
+        B, C, H, W = output.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
 
         # Apply valid mask (inside NY, not at stations)
-        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
 
         # Compute per-sample MSE
         se = (output - target) ** 2
         masked_se = se * valid_mask
 
-        mse_sum_per_sample = masked_se.view(B, -1).sum(dim=1)
-        valid_counts = valid_mask.view(B, -1).sum(dim=1).clamp(min=1.0)
+        mse_sum_per_sample = masked_se.reshape(B, -1).sum(dim=1)
+        valid_counts = valid_mask.reshape(B, -1).sum(dim=1).clamp(min=1.0)
         mse_per_sample = mse_sum_per_sample / valid_counts  # shape: [B]
 
         if reduction == 'none':
@@ -74,16 +74,16 @@ class MaskedRMSELoss(nn.Module):
         station_mask: [B, 1, H, W]
         """
         assert reduction in ['mean', 'none', 'global']
-        B, _, H, W = output.shape
+        B, C, H, W = output.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
 
-        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
 
         se = (output - target) ** 2
         masked_se = se * valid_mask
 
-        se_sum = masked_se.view(B, -1).sum(dim=1)               # [B]
-        valid_counts = valid_mask.view(B, -1).sum(dim=1).clamp(min=1.0)  # [B]
+        se_sum = masked_se.reshape(B, -1).sum(dim=1)               # [B]
+        valid_counts = valid_mask.reshape(B, -1).sum(dim=1).clamp(min=1.0)  # [B]
         rmse_per_sample = torch.sqrt(se_sum / valid_counts)     # [B]
 
         if reduction == 'none':
@@ -116,9 +116,9 @@ class MaskedTVLoss(nn.Module):
         x: [B, 1, H, W] (predicted field)
         station_mask: [B, 1, H, W]  (1=station, 0=else)
         """
-        B, _, H, W = x.shape
+        B, C, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
 
         # Horizontal and vertical TV only for valid locations
         dh = (x[:, :, :, 1:] - x[:, :, :, :-1]).abs() ** self.beta  # [B, 1, H, W-1]
@@ -152,9 +152,9 @@ class MaskedCharbonnierLoss(nn.Module):
         y: [B, 1, H, W] (target)
         station_mask: [B, 1, H, W]  (1=station, 0=else)
         """
-        B, _, H, W = x.shape
+        B, C, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
 
         diff = x - y
         charbonnier = torch.sqrt(diff**2 + self.eps**2)
@@ -180,9 +180,9 @@ class MaskedPSNR(nn.Module):
         y: [B, 1, H, W] (target)
         station_mask: [B, 1, H, W]  (1=station, 0=else)
         """
-        B, _, H, W = x.shape
+        B, C, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
 
         x = x * valid_mask
         y = y * valid_mask
@@ -212,9 +212,9 @@ class MaskedSSIM(nn.Module):
         y: [B, 1, H, W] (target)
         station_mask: [B, 1, H, W]  (1=station, 0=else)
         """
-        B, _, H, W = x.shape
+        B, C, H, W = x.shape
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
 
         x = x * valid_mask
         y = y * valid_mask
@@ -250,10 +250,10 @@ class MaskedCombinedMAEQuantileLoss(nn.Module):
         reduction: 'none', 'mean', or 'global'
         """
         assert reduction in ['mean', 'none', 'global']
-        B, _, H, W = output.shape
+        B, C, H, W = output.shape
 
         mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
-        valid_mask = mask.expand(B, 1, H, W).float()   # [B, 1, H, W].
+        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
 
         abs_error = torch.abs(output - target)
         error = target - output
@@ -262,9 +262,9 @@ class MaskedCombinedMAEQuantileLoss(nn.Module):
         mae_masked = abs_error * valid_mask
         quantile_masked = quantile_error * valid_mask
 
-        mae_sum_per_sample = mae_masked.view(B, -1).sum(dim=1)
-        quantile_sum_per_sample = quantile_masked.view(B, -1).sum(dim=1)
-        valid_counts = valid_mask.view(B, -1).sum(dim=1).clamp(min=1.0)  # [B]
+        mae_sum_per_sample = mae_masked.reshape(B, -1).sum(dim=1)
+        quantile_sum_per_sample = quantile_masked.reshape(B, -1).sum(dim=1)
+        valid_counts = valid_mask.reshape(B, -1).sum(dim=1).clamp(min=1.0)  # [B]
 
         mae_per_sample = mae_sum_per_sample / valid_counts
         quantile_per_sample = quantile_sum_per_sample / valid_counts
