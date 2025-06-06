@@ -4,9 +4,9 @@
 #SBATCH --output=slurmout/ddp_train-%j.out
 #SBATCH --error=slurmout/ddp_train-%j.err
 #SBATCH --time=07-00:00:00
-#SBATCH --mem=320gb
+#SBATCH --mem=640gb
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
+#SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --exclude=dgx02
@@ -37,8 +37,8 @@ weights_seed=${weights_seed:-42}
 num_epochs=${num_epochs:-200}
 loss_name=${loss_name:-'MaskedCombinedMAEQuantileLoss'}
 resume=${resume:-'false'}
-input_window_size=${input_window_size:-6}
-output_window_size=${output_window_size:-3}
+input_window_size=${input_window_size:-36}
+output_window_size=${output_window_size:-12}
 
 # ===============================
 # Echo all config values
