@@ -53,7 +53,7 @@ class Transform:
 class nowcast_dataset(Dataset):
     def __init__(self,zarr_store, variable, dates_range, input_window_size, output_window_size, freq,
                  missing_times=None, mode='train',data_seed=42,
-                 step_size=1):
+                 step_size=1, forecast_offset=0):
         # create a pandas timetime index for the entire training and validation period
         # This will be used to create the input and output samples
         # Unlike the Sparse_to_Dense model, we cannot eliminate the missint instances directly, since we will be dealing with forecasting.
@@ -64,10 +64,14 @@ class nowcast_dataset(Dataset):
         # create input and output samples by sliding the input window over the entire training and validation period
         in_samples = []
         out_samples = []
-        max_idx  = len(reference_dates) - input_window_size - output_window_size + 1
+        max_idx  = len(reference_dates) - input_window_size - output_window_size - forecast_offset + 1
         for i in range(0, max_idx, step_size):
             in_samples.append(reference_dates[i:i+input_window_size])
-            out_samples.append(reference_dates[i+input_window_size:i+input_window_size+output_window_size])
+            out_start = i + input_window_size + forecast_offset
+            out_end = out_start + output_window_size
+            if out_end > len(reference_dates):
+                break
+            out_samples.append(reference_dates[out_start:out_end])
         in_samples = np.array(in_samples)
         out_samples = np.array(out_samples)
         
@@ -168,7 +172,7 @@ if __name__ == "__main__":
     variable = 'i10fg'
     dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
     freq = '5min'
-    input_window_size = 2  # 3 hours at every 5 minutes
+    input_window_size = 3  # 3 hours at every 5 minutes
     output_window_size = 1  # 1 hour at every 5 minutes
     data_seed = 42
     mode = 'train'
@@ -204,7 +208,8 @@ if __name__ == "__main__":
         missing_times=None,
         mode=mode,
         data_seed=data_seed,
-        step_size=2
+        step_size=2,
+        forecast_offset=1
         )
 
     dataloader = DataLoader(dataset, batch_size=2, shuffle=False,num_workers=2, pin_memory=True)
