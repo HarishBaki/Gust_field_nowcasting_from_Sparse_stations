@@ -52,17 +52,20 @@ class Transform:
     
 class nowcast_dataset(Dataset):
     def __init__(self,zarr_store, variable, dates_range, input_window_size, output_window_size, freq,
-                 missing_times=None, mode='train',data_seed=42):
+                 missing_times=None, mode='train',data_seed=42,
+                 step_size=1):
         # create a pandas timetime index for the entire training and validation period
         # This will be used to create the input and output samples
         # Unlike the Sparse_to_Dense model, we cannot eliminate the missint instances directly, since we will be dealing with forecasting.
         # So, we need to identify the missing instances in samples, and remove the samples. 
+        # The step_size is used to create the time index with non-overlapping time instances.
         reference_dates = pd.date_range(start=dates_range[0], end=dates_range[1], freq=freq)
 
         # create input and output samples by sliding the input window over the entire training and validation period
         in_samples = []
         out_samples = []
-        for i in range(len(reference_dates) - input_window_size - output_window_size +1):
+        max_idx  = len(reference_dates) - input_window_size - output_window_size + 1
+        for i in range(0, max_idx, step_size):
             in_samples.append(reference_dates[i:i+input_window_size])
             out_samples.append(reference_dates[i+input_window_size:i+input_window_size+output_window_size])
         in_samples = np.array(in_samples)
@@ -201,13 +204,14 @@ if __name__ == "__main__":
         missing_times=None,
         mode=mode,
         data_seed=data_seed,
+        step_size=2
         )
 
-    dataloader = DataLoader(dataset, batch_size=2, shuffle=True,num_workers=2, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=False,num_workers=2, pin_memory=True)
     # %%
     iterator = iter(dataloader)
     # Example usage
-    for b in range(1):
+    for b in range(3):
         start_time = time.time()
         batch = next(iterator, None)
 
