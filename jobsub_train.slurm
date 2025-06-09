@@ -39,7 +39,7 @@ loss_name=${loss_name:-'MaskedCombinedMAEQuantileLoss'}
 resume=${resume:-'false'}
 input_window_size=${input_window_size:-6}
 output_window_size=${output_window_size:-1}
-step-size=${step_size:-1}
+step_size=${step_size:-1}
 forecast_offset=${forecast_offset:-5}
 
 # ===============================
