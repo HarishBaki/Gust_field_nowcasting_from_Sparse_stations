@@ -191,6 +191,8 @@ if __name__ == "__main__":
     parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
     parser.add_argument('--input_window_size', type=int, default=6, help='Input window size (number of timesteps)')
     parser.add_argument('--output_window_size', type=int, default=3, help='Output window size (number of timesteps)')
+    parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
+    parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
     args, unknown = parser.parse_known_args()
 
     # Update variables from parsed arguments
@@ -207,10 +209,12 @@ if __name__ == "__main__":
     resume = args.resume
     input_window_size = args.input_window_size
     output_window_size = args.output_window_size
+    step_size = args.step_size
+    forecast_offset = args.forecast_offset
 
     checkpoint_dir = f"{checkpoint_dir}/{model_name}"
     checkpoint_dir = f"{checkpoint_dir}/{loss_name}"
-    checkpoint_dir =  f"{checkpoint_dir}/in_window-{input_window_size}_out_window-{output_window_size}"
+    checkpoint_dir =  f"{checkpoint_dir}/in_window-{input_window_size}_out_window-{output_window_size}-step-{step_size}_offset-{forecast_offset}"
     os.makedirs(checkpoint_dir, exist_ok=True)
     
     # %%
@@ -271,7 +275,8 @@ if __name__ == "__main__":
         freq,
         missing_times=None,
         mode=mode,
-        data_seed=data_seed
+        data_seed=data_seed,
+        forecast_offset=forecast_offset
         )
 
     if is_distributed():
@@ -405,7 +410,7 @@ if __name__ == "__main__":
     # === Optimizer, scheduler, and early stopping ===
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = ExponentialLR(optimizer, gamma=0.9)
-    early_stopping = EarlyStopping(patience=120, min_delta=0.0)
+    early_stopping = EarlyStopping(patience=20, min_delta=0.0)
     if not dist.is_initialized() or dist.get_rank() == 0:
         print("Model created and moved to device.")
     # %%
