@@ -182,7 +182,7 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
     parser.add_argument('--model_name', type=str, default='SwinT2UNet', choices=['DCNN', 'UNet', 'SwinT2UNet', 'GoogleUNet'], help='Model to use')
     parser.add_argument('--activation_layer', type=str, default='gelu', help='Activation function')
-    parser.add_argument('--transform', type=str, default='standard', choices=['standard', 'minmax'], help='Data transformation type')
+    parser.add_argument('--transform', type=str_or_none, default=None, choices=['standard', 'minmax',None], help='Data transformation type')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--num_workers', type=int, default=16, help='Number of workers for data loading')
     parser.add_argument('--weights_seed', type=int, default=42, help='Random seed for weight initialization')
@@ -214,6 +214,8 @@ if __name__ == "__main__":
 
     checkpoint_dir = f"{checkpoint_dir}/{model_name}"
     checkpoint_dir = f"{checkpoint_dir}/{loss_name}"
+    checkpoint_dir = f"{checkpoint_dir}/{transform}"
+    checkpoint_dir = f"{checkpoint_dir}/{activation_layer}-{weights_seed}"
     checkpoint_dir =  f"{checkpoint_dir}/in_window-{input_window_size}_out_window-{output_window_size}-step-{step_size}_offset-{forecast_offset}"
     os.makedirs(checkpoint_dir, exist_ok=True)
     
@@ -256,14 +258,18 @@ if __name__ == "__main__":
     input_stats = NYSM_stats.sel(variable=[variable])
     target_stats = NYSM_stats.sel(variable=[variable])
     # Standardization
-    input_transform = Transform(
-        mode=transform,  # 'standard' or 'minmax'
-        stats=input_stats
-    )
-    target_transform = Transform(
-        mode=transform,  # 'standard' or 'minmax'
-        stats=target_stats
-    )
+    if transform is not None:
+        input_transform = Transform(
+            mode=transform,  # 'standard' or 'minmax'
+            stats=input_stats
+        )
+        target_transform = Transform(
+            mode=transform,  # 'standard' or 'minmax'
+            stats=target_stats
+        )
+    else:
+        input_transform = None
+        target_transform = None
 
     mode = 'train'
     train_dataset = nowcast_dataset(
