@@ -10,9 +10,25 @@
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --container-name=physicsnemo
-#SBATCH --container-mounts=/network/rit/dgx/dgx_basulab/Harish:/mnt/dgx_basulab/Harish,/network/rit/lab/basulab:/mnt/basulab,/network/rit/home/hb533188:/mnt/home/hb533188,/network/rit/dgx/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project
+#SBATCH --container-mounts=/network/rit/dgx/dgx_basulab/Harish:/mnt/dgx_basulab/Harish,/network/rit/lab/basulab:/mnt/basulab,/network/rit/home/hb533188:/mnt/home/hb533188,/network/rit/dgx/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project,/network/rit/lab/basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/data/MRMS_grib_data:/mnt/current_project/data/MRMS_grib_data
 #SBATCH --container-workdir=/mnt/current_project
 
+# (Optional) faster pip installs by using your home cache:
+export PIP_CACHE_DIR=/mnt/home/hb533188/.cache/pip
+
+# --- CDO via micromamba (user install) ---
+export MAMBA_ROOT_PREFIX="/mnt/home/hb533188/.micromamba"
+if [ ! -x "$MAMBA_ROOT_PREFIX/bin/micromamba" ]; then
+  curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C /tmp bin/micromamba
+  mkdir -p "$MAMBA_ROOT_PREFIX/bin"
+  mv /tmp/bin/micromamba "$MAMBA_ROOT_PREFIX/bin/micromamba"
+fi
+eval "$("$MAMBA_ROOT_PREFIX/bin/micromamba" shell hook -s bash)"
+if ! micromamba env list | grep -q '^cdo\s'; then
+  micromamba create -y -n cdo -c conda-forge cdo eccodes libnetcdf netcdf4 hdf5 udunits gdal proj
+fi
+micromamba activate cdo
+cdo -V
 
 # Install required Python packages inside the container
 pip install --quiet timm torchmetrics seaborn metpy herbie-data basemap basemap-data-hires lxml
