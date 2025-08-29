@@ -1,0 +1,3 @@
+[submodule "external/predrnn"]
+	path = external/predrnn
+	url = https://github.com/thuml/predrnn-pytorch.git
