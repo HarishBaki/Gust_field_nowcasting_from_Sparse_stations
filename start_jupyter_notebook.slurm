@@ -14,6 +14,9 @@
 #SBATCH --container-mounts=/network/rit/dgx/dgx_basulab/Harish:/mnt/dgx_basulab/Harish,/network/rit/lab/basulab:/mnt/basulab,/network/rit/home/hb533188:/mnt/home/hb533188,/network/rit/dgx/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project,/network/rit/lab/basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/data/MRMS_grib_data:/mnt/current_project/data/MRMS_grib_data,/network/rit/lab/basulab/Harish/Downloads/s5cmd_2.3.0_Linux-64bit:/mnt/s5cmd
 #SBATCH --container-workdir=/mnt/current_project
 
+# Prevent user-site packages (like NumPy 2.x in ~/.local) from leaking in
+export PYTHONNOUSERSITE=1
+
 # Install required Python packages inside the container
 pip install --quiet timm torchmetrics seaborn metpy herbie-data basemap basemap-data-hires lxml
 
