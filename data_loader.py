@@ -58,7 +58,8 @@ class nowcast_dataset(Dataset):
         # This will be used to create the input and output samples
         # Unlike the Sparse_to_Dense model, we cannot eliminate the missint instances directly, since we will be dealing with forecasting.
         # So, we need to identify the missing instances in samples, and remove the samples. 
-        # The step_size is used to create the time index with non-overlapping time instances.
+        # The step_size is used to create the time index with non-overlapping time instances, if needed. For example, if step_size=2, input+output sequences will have 2 instances advance for the next sequence.
+        # The forecast_offset is used to create the output samples with a specific time offset. For example, if forecast_offset=1, the output sequence will have 1 timestep offset from the input sequence.
         reference_dates = pd.date_range(start=dates_range[0], end=dates_range[1], freq=freq)
 
         # create input and output samples by sliding the input window over the entire training and validation period
