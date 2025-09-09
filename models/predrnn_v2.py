@@ -2,9 +2,8 @@ __author__ = 'yunbo'
 
 import torch
 import torch.nn as nn
-from core.layers.SpatioTemporalLSTMCell_v2 import SpatioTemporalLSTMCell
+from models.layers.SpatioTemporalLSTMCell_v2 import SpatioTemporalLSTMCell
 import torch.nn.functional as F
-from core.utils.tsne import visualization
 
 
 class RNN(nn.Module):
@@ -12,8 +11,6 @@ class RNN(nn.Module):
         super(RNN, self).__init__()
 
         self.configs = configs
-        self.visual = self.configs.visual
-        self.visual_path = self.configs.visual_path
 
         self.frame_channel = configs.patch_size[0] * configs.patch_size[1] * configs.img_channel
         self.num_layers = num_layers
@@ -51,9 +48,6 @@ class RNN(nn.Module):
         c_t = []
         delta_c_list = []
         delta_m_list = []
-        if self.visual:
-            delta_c_visual = []
-            delta_m_visual = []
 
         decouple_loss = []
 
@@ -66,7 +60,7 @@ class RNN(nn.Module):
 
         memory = torch.zeros([batch, self.num_hidden[0], height, width]).to(self.configs.device)
 
-        for t in range(self.configs.total_length - 1):
+        for t in range(self.configs.total_window_size - 1):
 
             if self.configs.reverse_scheduled_sampling == 1:
                 # reverse schedule sampling
@@ -85,17 +79,11 @@ class RNN(nn.Module):
             h_t[0], c_t[0], memory, delta_c, delta_m = self.cell_list[0](net, h_t[0], c_t[0], memory)
             delta_c_list[0] = F.normalize(self.adapter(delta_c).view(delta_c.shape[0], delta_c.shape[1], -1), dim=2)
             delta_m_list[0] = F.normalize(self.adapter(delta_m).view(delta_m.shape[0], delta_m.shape[1], -1), dim=2)
-            if self.visual:
-                delta_c_visual.append(delta_c.view(delta_c.shape[0], delta_c.shape[1], -1))
-                delta_m_visual.append(delta_m.view(delta_m.shape[0], delta_m.shape[1], -1))
 
             for i in range(1, self.num_layers):
                 h_t[i], c_t[i], memory, delta_c, delta_m = self.cell_list[i](h_t[i - 1], h_t[i], c_t[i], memory)
                 delta_c_list[i] = F.normalize(self.adapter(delta_c).view(delta_c.shape[0], delta_c.shape[1], -1), dim=2)
                 delta_m_list[i] = F.normalize(self.adapter(delta_m).view(delta_m.shape[0], delta_m.shape[1], -1), dim=2)
-                if self.visual:
-                    delta_c_visual.append(delta_c.view(delta_c.shape[0], delta_c.shape[1], -1))
-                    delta_m_visual.append(delta_m.view(delta_m.shape[0], delta_m.shape[1], -1))
 
             x_gen = self.conv_last(h_t[self.num_layers - 1])
             next_frames.append(x_gen)
@@ -104,15 +92,9 @@ class RNN(nn.Module):
                 decouple_loss.append(
                     torch.mean(torch.abs(torch.cosine_similarity(delta_c_list[i], delta_m_list[i], dim=2))))
 
-        if self.visual:
-            # visualization of delta_c and delta_m
-            delta_c_visual = torch.stack(delta_c_visual, dim=0)
-            delta_m_visual = torch.stack(delta_m_visual, dim=0)
-            visualization(self.configs.total_length, self.num_layers, delta_c_visual, delta_m_visual, self.visual_path)
-            self.visual = 0
-
         decouple_loss = torch.mean(torch.stack(decouple_loss, dim=0))
+        decouple_loss = self.configs.decouple_beta * decouple_loss
         # [length, batch, channel, height, width] -> [batch, length, height, width, channel]
         next_frames = torch.stack(next_frames, dim=0).permute(1, 0, 3, 4, 2).contiguous()
-        loss = self.MSE_criterion(next_frames, frames_tensor[:, 1:]) + self.configs.decouple_beta * decouple_loss
-        return next_frames, loss
+        #loss = self.MSE_criterion(next_frames, frames_tensor[:, 1:]) + self.configs.decouple_beta * decouple_loss
+        return next_frames, decouple_loss
