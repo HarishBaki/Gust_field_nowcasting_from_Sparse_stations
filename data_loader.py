@@ -10,38 +10,44 @@ import time
 import os
 # %%
 class Transform:
-    def __init__(self, mode, stats):
+    def __init__(self, mode, stats, feature_axis=-1):
         """
-        mode: 'standard' or 'minmax'
-        stats: 
-            if mode == 'standard': {'mean': [...], 'std': [...]}
-            if mode == 'minmax': {'min': [...], 'max': [...]}
+        feature_axis: which axis holds variables/channels.
+        e.g. 1 for [B,C,H,W,...], -1 for [B,T,H,W,C]
         """
         self.mode = mode
+        self.feature_axis = feature_axis
+
+        # accept pandas or arrays
+        def to_1d_tensor(x):
+            return torch.as_tensor(getattr(x, "values", x), dtype=torch.float32)
+
         if mode == "standard":
-            self.param1 = torch.tensor(stats['mean'].values, dtype=torch.float32)  # mean
-            self.param2 = torch.tensor(stats['std'].values, dtype=torch.float32)   # std
+            self.param1 = to_1d_tensor(stats["mean"])  # shape [C]
+            self.param2 = to_1d_tensor(stats["std"])   # shape [C]
         elif mode == "minmax":
-            self.param1 = torch.tensor(stats['min'].values, dtype=torch.float32)   # min
-            self.param2 = torch.tensor(stats['max'].values, dtype=torch.float32)   # max
+            self.param1 = to_1d_tensor(stats["min"])   # shape [C]
+            self.param2 = to_1d_tensor(stats["max"])   # shape [C]
         else:
             raise ValueError("mode must be 'standard' or 'minmax'")
 
     def _reshape_params(self, x):
-        """
-        Reshapes the parameters for broadcasting, based on input dimensions.
-        """
-        stats_shape = [1, -1] + [1] * (x.ndim - 2)
-        p1 = self.param1.reshape(stats_shape).to(x.device)
-        p2 = self.param2.reshape(stats_shape).to(x.device)
+        # Build [1,1,...,C,...,1] with C at feature_axis
+        shape = [1] * x.ndim
+        C = self.param1.numel()
+        axis = self.feature_axis if self.feature_axis >= 0 else x.ndim + self.feature_axis
+        shape[axis] = C
+        p1 = self.param1.reshape(shape).to(x.device)
+        p2 = self.param2.reshape(shape).to(x.device)
         return p1, p2
 
     def __call__(self, x):
         p1, p2 = self._reshape_params(x)
+        eps = 1e-8
         if self.mode == "standard":
-            return (x - p1) / (p2 + 1e-8)
+            return (x - p1) / (p2 + eps)
         elif self.mode == "minmax":
-            return (x - p1) / (p2 - p1 + 1e-8)
+            return (x - p1) / (p2 - p1 + eps)
 
     def inverse(self, x):
         p1, p2 = self._reshape_params(x)
