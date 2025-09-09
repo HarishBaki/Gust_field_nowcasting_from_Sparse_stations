@@ -8,6 +8,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.optim.lr_scheduler import ExponentialLR
+from torch.amp import autocast, GradScaler
 
 
 import xarray as xr
@@ -58,6 +59,8 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
 
     itr = 0
     eta = args.sampling_start_value
+
+    scaler = GradScaler("cuda")   # <<< AMP scaler
 
     for epoch in range(start_epoch, args.num_epochs):
         if train_sampler is not None:
@@ -121,17 +124,21 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             else:
                 eta, real_input_flag = schedule_sampling(eta, itr,args)
 
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
-            loss, metric_value = forward_step(frames_tensor, real_input_flag)
+            # === AMP forward/backward ===
+            with autocast("cuda", dtype=torch.float16):   # <<< AMP autocast
+                loss, metric_value = forward_step(frames_tensor, real_input_flag)
 
-            if args.reverse_input:
-                frames_tensor_rev = torch.flip(frames_tensor, dims=[1])
-                loss_rev, _ = forward_step(frames_tensor_rev, real_input_flag)
-                loss = (loss + loss_rev) / 2
+                if args.reverse_input:
+                    frames_tensor_rev = torch.flip(frames_tensor, dims=[1])
+                    loss_rev, _ = forward_step(frames_tensor_rev, real_input_flag)
+                    loss = (loss + loss_rev) / 2
 
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
 
             train_loss_total += loss.item()
             train_metric_total += metric_value.item()
@@ -163,7 +170,8 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
 
                 _, real_input_flag = flags_eval(args)
 
-                loss, metric_value = forward_step(frames_tensor, real_input_flag)
+                with autocast("cuda", dtype=torch.float16):   # AMP works for eval too
+                    loss, metric_value = forward_step(frames_tensor, real_input_flag)
 
                 val_loss_total += loss.item()
                 val_metric_total += metric_value.item()
@@ -225,7 +233,7 @@ if __name__ == "__main__":
         num_hidden="128,128,128,128",
         filter_size=5,
         stride=1,
-        patch_size=(4,4),
+        patch_size=(8,8),
         layer_norm=0,
         decouple_beta=0.1,
         reverse_scheduled_sampling=1,
@@ -485,7 +493,7 @@ if __name__ == "__main__":
         missing_times=None,
         mode=mode,
         data_seed=data_seed,
-        step_size=args.step_size,
+        step_size=args.input_window_size,
         forecast_offset=args.forecast_offset
     )
 
@@ -552,6 +560,7 @@ if __name__ == "__main__":
                 "output_window_size": args.output_window_size,
                 "train_val_dates_range": train_val_dates_range,
                 "transform": args.transform,
+                "patch_size": args.patch_size,
             },
             name=args.checkpoint_dir[len('checkpoints/'):].replace('/','_'),
             dir="wandb_logs"
