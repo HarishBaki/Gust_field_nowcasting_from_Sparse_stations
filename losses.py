@@ -54,46 +54,56 @@ class MaskedMSELoss(nn.Module):
 
 class MaskedRMSELoss(nn.Module):
     """
-    Computes RMSE loss:
-    - Per-sample RMSE (reduction='none')
-    - Mean over batch (reduction='mean') → default (good for training)
-    - Global RMSE across all samples (reduction='global') → useful for evaluation
+    Computes RMSE loss over masked regions.
+    Supports:
+      - [B, C, H, W]  (channels first, CNN outputs)
+      - [B, T, H, W, C]  (channels last, sequence models)
     """
     def __init__(self, mask_2d):
         """
-        mask_2d: torch.Tensor [H, W]
-        reduction: 'mean', 'none', or 'global'
+        mask_2d: torch.Tensor [H, W], values {0,1}
         """
         super().__init__()
         self.register_buffer("mask_2d", mask_2d.float())
 
     def forward(self, output, target, reduction='mean'):
         """
-        output: [B, 1, H, W]
-        target: [B, 1, H, W]
-        station_mask: [B, 1, H, W]
+        output: [B,C,H,W] or [B,T,H,W,C]
+        target: same shape
+        reduction: 'mean' | 'none' | 'global'
         """
         assert reduction in ['mean', 'none', 'global']
-        B, C, H, W = output.shape
-        mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+        if output.shape != target.shape:
+            raise ValueError(f"Shape mismatch: {output.shape} vs {target.shape}")
 
-        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
+        ndim = output.ndim
+        if ndim == 4:
+            # [B,C,H,W]
+            B, C, H, W = output.shape
+            mask = self.mask_2d[None, None, :, :].expand(B, C, H, W)  # [B,C,H,W]
+        elif ndim == 5:
+            # [B,T,H,W,C]
+            B, T, H, W, C = output.shape
+            mask = self.mask_2d[None, None, :, :, None].expand(B, T, H, W, C)  # [B,T,H,W,C]
+        else:
+            raise ValueError(f"Unsupported ndim={ndim}")
 
         se = (output - target) ** 2
-        masked_se = se * valid_mask
+        masked_se = se * mask
 
-        se_sum = masked_se.reshape(B, -1).sum(dim=1)               # [B]
-        valid_counts = valid_mask.reshape(B, -1).sum(dim=1).clamp(min=1.0)  # [B]
-        rmse_per_sample = torch.sqrt(se_sum / valid_counts)     # [B]
+        # collapse to [B, -1]
+        se_sum = masked_se.reshape(output.shape[0], -1).sum(dim=1)   # [B]
+        valid_counts = mask.reshape(output.shape[0], -1).sum(dim=1).clamp(min=1.0)
+        rmse_per_sample = torch.sqrt(se_sum / valid_counts)  # [B]
 
         if reduction == 'none':
-            return rmse_per_sample  # [B]
+            return rmse_per_sample
         elif reduction == 'mean':
-            return rmse_per_sample.mean()  # scalar
+            return rmse_per_sample.mean()
         elif reduction == 'global':
             total_se = se_sum.sum()
             total_count = valid_counts.sum().clamp(min=1.0)
-            return torch.sqrt(total_se / total_count)  # scalar
+            return torch.sqrt(total_se / total_count)
         
     
 class MaskedTVLoss(nn.Module):
@@ -136,6 +146,7 @@ class MaskedTVLoss(nn.Module):
 class MaskedCharbonnierLoss(nn.Module):
     """
     Charbonnier Loss, only over valid (masked) locations.
+    Works for inputs of shape [B,C,H,W] or [B,T,H,W,C].
     """
     def __init__(self, mask_2d, eps=1e-3):
         """
@@ -152,14 +163,22 @@ class MaskedCharbonnierLoss(nn.Module):
         y: [B, 1, H, W] (target)
         station_mask: [B, 1, H, W]  (1=station, 0=else)
         """
-        B, C, H, W = x.shape
-        mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
+        ndim = x.ndim
+        if ndim == 4:
+            # [B,C,H,W]
+            B, C, H, W = x.shape
+            mask = self.mask_2d[None, None, :, :].expand(B, C, H, W)
+        elif ndim == 5:
+            # [B,T,H,W,C] (channels last)
+            B, T, H, W, C = x.shape
+            mask = self.mask_2d[None, None, :, :, None].expand(B, T, H, W, C)
+        else:
+            raise ValueError(f"Unsupported ndim={ndim}. Expected 4 or 5.")
 
         diff = x - y
-        charbonnier = torch.sqrt(diff**2 + self.eps**2)
-        masked_charb = charbonnier * valid_mask
-        loss = masked_charb.sum() / (valid_mask.sum().clamp(min=1.0))   # This is critical correction, it broadcasts the mean over batches. 
+        charbonnier = torch.sqrt(diff ** 2 + self.eps ** 2)
+        masked_charb = charbonnier * mask
+        loss = masked_charb.sum() / mask.sum().clamp(min=1.0)
         return loss
 
 class MaskedPSNR(nn.Module):
