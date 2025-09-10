@@ -4,9 +4,9 @@
 #SBATCH --output=slurmout/ddp_train-%j.out
 #SBATCH --error=slurmout/ddp_train-%j.err
 #SBATCH --time=07-00:00:00
-#SBATCH --mem=320gb
+#SBATCH --mem=640gb
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
+#SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --exclude=dgx02
@@ -21,6 +21,7 @@
 # Optionally pass SLURM values into the shell script as environment variables
 export nproc_per_node=${SLURM_NTASKS_PER_NODE}
 export num_workers=${SLURM_CPUS_PER_TASK}
+export MASTER_ADDR=$(scontrol show hostnames $SLURM_NODELIST | head -n 1)
 export MASTER_PORT=$((20000 + RANDOM % 20000))
 
 # ===============================
@@ -30,7 +31,7 @@ variable=${variable:-'i10fg'}
 checkpoint_dir=${checkpoint_dir:-'checkpoints'}
 model_name=${model_name:-'predrnn_v2'}
 activation_layer=${activation_layer:-'gelu'}
-transform=${transform:-'none'}
+transform=${transform:-'standard'}
 batch_size=${batch_size:-12}
 num_workers=${num_workers:-16}
 weights_seed=${weights_seed:-42}
@@ -41,6 +42,7 @@ input_window_size=${input_window_size:-36}
 output_window_size=${output_window_size:-36}
 step_size=${step_size:-1}
 forecast_offset=${forecast_offset:-0}
+is_training=${is_training:-1}
 
 # ===============================
 # Echo all config values
@@ -63,6 +65,7 @@ echo "Input Window Size:        $input_window_size"
 echo "Output Window Size:       $output_window_size"
 echo "Step Size:                $step_size"
 echo "Forecast Offset:          $forecast_offset"
+echo "Is Training:              $is_training"
 echo "======================================"
 
 export PYTHONNOUSERSITE=1   # make Python use the system site-packages, not from local user
@@ -90,4 +93,5 @@ torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredR
   --output_window_size "$output_window_size" \
   --step_size "$step_size" \
   --forecast_offset "$forecast_offset" \
+  --is_training "$is_training" \
   $( [ "$resume" = "true" ] && echo "--resume" )
