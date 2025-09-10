@@ -43,6 +43,192 @@ sys.path.insert(0, str(predrnn_path))
 from types import SimpleNamespace
 
 # %%
+# === Defining schedule sampling functions ===
+@torch.no_grad()
+def reserve_schedule_sampling_exp(itr, args, batch_size=None, dtype=torch.float32):
+    """
+    Reverse schedule sampling flags in GRID space.
+    Returns: real_input_flag of shape [B, T-2, H, W, C] (float32 on device)
+    """
+    B   = batch_size if batch_size is not None else args.batch_size
+    Tin = args.input_window_size
+    T   = args.total_window_size
+    H, W = args.img_size
+    C = args.img_channel
+    device = args.device
+
+    # r_eta / eta
+    if itr < args.r_sampling_step_1:
+        r_eta = 0.5
+    elif itr < args.r_sampling_step_2:
+        r_eta = 1.0 - 0.5 * math.exp(-(itr - args.r_sampling_step_1) / float(args.r_exp_alpha))
+    else:
+        r_eta = 1.0
+
+    if itr < args.r_sampling_step_1:
+        eta = 0.5
+    elif itr < args.r_sampling_step_2:
+        eta = 0.5 - (0.5 / (args.r_sampling_step_2 - args.r_sampling_step_1)) * (itr - args.r_sampling_step_1)
+    else:
+        eta = 0.0
+
+    # random flips → booleans
+    gen = None  # or pass a torch.Generator for reproducibility
+    r_true_token = (torch.rand(B, Tin - 1, device=device, generator=gen) < r_eta)
+    true_token   = (torch.rand(B, T - Tin - 1, device=device, generator=gen) < eta)
+
+    # build flags list per-sample/time (keep vectorized over HWC)
+    ones  = torch.ones (H, W, C, device=device, dtype=dtype)
+    zeros = torch.zeros(H, W, C, device=device, dtype=dtype)
+
+    # length = T-2
+    flags = []
+    for i in range(B):
+        row = []
+        # j = 0 .. T-3  → split at Tin-1
+        for j in range(T - 2):
+            if j < Tin - 1:
+                row.append(ones if r_true_token[i, j] else zeros)
+            else:
+                jj = j - (Tin - 1)
+                row.append(ones if true_token[i, jj] else zeros)
+        flags.append(torch.stack(row, dim=0))   # [T-2,H,W,C]
+    real_input_flag = torch.stack(flags, dim=0) # [B,T-2,H,W,C]
+    return real_input_flag  # dtype float32
+
+
+@torch.no_grad()
+def schedule_sampling(eta, itr, args, batch_size=None, dtype=torch.float32):
+    """
+    Forward schedule sampling flags in GRID space.
+    Returns: (eta_new, real_input_flag) with shape [B, T-Tin-1, H, W, C]
+    """
+    B   = batch_size if batch_size is not None else args.batch_size
+    Tin = args.input_window_size
+    T   = args.total_window_size
+    H, W = args.img_size
+    C = args.img_channel
+    device = args.device
+
+    if not getattr(args, "scheduled_sampling", True):
+        # zeros like original
+        rif = torch.zeros(B, T - Tin - 1, H, W, C, device=device, dtype=dtype)
+        return 0.0, rif
+
+    # update eta
+    if itr < args.sampling_stop_iter:
+        eta_new = eta - args.sampling_changing_rate
+    else:
+        eta_new = 0.0
+
+    # Bernoulli draws
+    gen = None
+    true_token = (torch.rand(B, T - Tin - 1, device=device, generator=gen) < eta_new)
+
+    ones  = torch.ones (H, W, C, device=device, dtype=dtype)
+    zeros = torch.zeros(H, W, C, device=device, dtype=dtype)
+
+    flags = []
+    for i in range(B):
+        row = [ones if true_token[i, j] else zeros for j in range(T - Tin - 1)]
+        flags.append(torch.stack(row, dim=0))   # [T-Tin-1,H,W,C]
+    real_input_flag = torch.stack(flags, dim=0) # [B,T-Tin-1,H,W,C]
+    return eta_new, real_input_flag
+
+@torch.no_grad()
+def flags_eval(args, batch_size=None):
+    B   = batch_size if batch_size is not None else args.batch_size
+    Tin    = args.input_window_size
+    T      = args.total_window_size
+    H, W   = args.img_size
+    C      = args.img_channel
+    device = args.device
+    dtype  = torch.float32
+
+    if args.reverse_scheduled_sampling == 1:
+        L = T - 2  # reverse mode length
+        # timeline index j=0..T-3 corresponds to decisions for times 1..T-2
+        # set first Tin-1 to 1 (teacher forcing), rest 0
+        ones  = torch.ones (B, Tin-1, H, W, C, device=device, dtype=dtype)
+        zeros = torch.zeros(B, L-(Tin-1), H, W, C, device=device, dtype=dtype)
+        flags = torch.cat([ones, zeros], dim=1)  # [B,T-2,H,W,C]
+        eta   = None
+        return eta, flags
+    else:
+        L = T - Tin - 1  # forward mode length
+        flags = torch.zeros(B, L, H, W, C, device=device, dtype=dtype)  # pure open-loop
+        eta   = None
+        return eta, flags
+
+def forward_step(frames_tensor, real_input_flag,
+                 model, criterion, metric,
+                 mask_tensor_expanded, args,
+                 input_transform=None, return_preds=False):
+    """
+    One forward + loss + metric computation step.
+    
+    Parameters
+    ----------
+    frames_tensor : torch.Tensor
+        Shape [B, Tin+Tout, H, W, 1]
+    real_input_flag : torch.Tensor
+        Schedule sampling mask, shape [B, Tin+Tout-2, H, W, 1]
+    model : nn.Module
+        PredRNN-V2 model
+    criterion : callable
+        Loss function
+    metric : callable
+        Metric function
+    mask_tensor_expanded : torch.Tensor
+        Mask of shape [1,1,H,W,1]
+    args : Namespace
+        Holds config (patch_size, input_window_size, etc.)
+    input_transform : Transform, optional
+        Transformation with .__call__ and .inverse
+    return_preds : bool, optional
+        Whether to return predictions, only for testing
+    """
+    # Transform input
+    if input_transform is not None:
+        frames_tensor = input_transform(frames_tensor)
+
+    # Mask input
+    masked_frames_tensor = torch.where(mask_tensor_expanded, frames_tensor, 0)
+
+    # Patchify
+    patched_frames_tensor = reshape_patch(masked_frames_tensor, args.patch_size)
+    real_input_flag = reshape_patch(real_input_flag, args.patch_size)
+
+    # Forward model
+    next_frames, decouple_loss = model(patched_frames_tensor, real_input_flag)
+
+    # Unpatchify
+    next_frames = reshape_patch_back(next_frames, args.patch_size)
+
+    # Mask predictions
+    masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
+
+    # Compute loss
+    loss = criterion(masked_next_frames, masked_frames_tensor[:, 1:]) + decouple_loss
+
+    # Metric on inverse-transformed data if needed
+    if input_transform is not None:
+        frames_tensor = input_transform.inverse(frames_tensor)
+        masked_frames_tensor = torch.where(mask_tensor_expanded, frames_tensor, 0)
+
+        next_frames = input_transform.inverse(next_frames)
+        masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
+
+    metric_value = metric(
+        masked_next_frames[:, args.input_window_size-1:],
+        masked_frames_tensor[:, args.input_window_size:]
+    )
+
+    if return_preds:
+        return loss, metric_value, masked_next_frames
+    else:
+        return loss, metric_value
+
 def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, metric,
                train_sampler, scheduler, early_stopping, mask_tensor,input_transform=None,target_transform=None,
                args=None):
@@ -68,41 +254,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
 
         # Mask tensor needs to be in same shape as frames_tensor
         mask_tensor_expanded = mask_tensor[None, None, :, :, None].to(args.device)  # [1,1,H,W,1]
-        def forward_step(frames_tensor, real_input_flag):
-            # Transform input and target
-            if input_transform is not None:
-                frames_tensor = input_transform(frames_tensor)
-
-            # Mask frames with NYS boundary
-            masked_frames_tensor = torch.where(mask_tensor_expanded, frames_tensor, 0)
-
-            # Patchify the frames_tensor and real_input_flags
-            patched_frames_tensor = reshape_patch(masked_frames_tensor, args.patch_size)
-            real_input_flag = reshape_patch(real_input_flag, args.patch_size)
-            
-            next_frames, decouple_loss = model(patched_frames_tensor, real_input_flag)
-
-            # Apply inverse patching
-            next_frames = reshape_patch_back(next_frames, args.patch_size)
-
-            # Mask next frames with NYS boundary
-            masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
-
-            loss = criterion(masked_next_frames, masked_frames_tensor[:, 1:]) + decouple_loss
-
-            # Compute the metric, ONLY ON THE PREDICTION HORIZON, on inverse transformed, if needed
-            if input_transform is not None:
-                frames_tensor = input_transform.inverse(frames_tensor)
-                # Mask frames with NYS boundary
-                masked_frames_tensor = torch.where(mask_tensor_expanded, frames_tensor, 0)
-
-                next_frames = input_transform.inverse(next_frames)
-                masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
-
-            metric_value = metric(masked_next_frames[:,args.input_window_size-1:], masked_frames_tensor[:,args.input_window_size:])
-
-            return loss, metric_value
-
+        
         # === Training ===
         model.train()
         train_loss_total = 0.0
@@ -118,27 +270,26 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             frames_tensor = frames_tensor.unsqueeze(-1)     # [B, Tin+Tout, H, W, 1]
 
             frames_tensor = frames_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, H, W, 1]
-
+            Bcur = frames_tensor.size(0)
             if args.reverse_scheduled_sampling == 1:
-                real_input_flag = reserve_schedule_sampling_exp(itr,args)
+                real_input_flag = reserve_schedule_sampling_exp(itr,args,batch_size=Bcur)
             else:
-                eta, real_input_flag = schedule_sampling(eta, itr,args)
+                eta, real_input_flag = schedule_sampling(eta, itr,args,batch_size=Bcur)
 
             optimizer.zero_grad(set_to_none=True)
 
             # === AMP forward/backward ===
             with autocast("cuda", dtype=torch.float16):   # <<< AMP autocast
-                loss, metric_value = forward_step(frames_tensor, real_input_flag)
+                loss, metric_value  = forward_step(frames_tensor, real_input_flag, model, criterion, metric, mask_tensor_expanded, args, input_transform, return_preds=False)
 
                 if args.reverse_input:
                     frames_tensor_rev = torch.flip(frames_tensor, dims=[1])
-                    loss_rev, _ = forward_step(frames_tensor_rev, real_input_flag)
+                    loss_rev, _ = forward_step(frames_tensor_rev, real_input_flag, model, criterion, metric, mask_tensor_expanded, args, input_transform, return_preds=False)
                     loss = (loss + loss_rev) / 2
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-
 
             train_loss_total += loss.item()
             train_metric_total += metric_value.item()
@@ -167,11 +318,11 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                 frames_tensor = frames_tensor.unsqueeze(-1)     # [B, Tin+Tout, H, W, 1]
 
                 frames_tensor = frames_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, H, W, 1]
-
-                _, real_input_flag = flags_eval(args)
+                Bcur = frames_tensor.size(0)
+                _, real_input_flag = flags_eval(args,batch_size=Bcur)
 
                 with autocast("cuda", dtype=torch.float16):   # AMP works for eval too
-                    loss, metric_value = forward_step(frames_tensor, real_input_flag)
+                    loss, metric_value  = forward_step(frames_tensor, real_input_flag, model, criterion, metric, mask_tensor_expanded, args, input_transform, return_preds=False)
 
                 val_loss_total += loss.item()
                 val_metric_total += metric_value.item()
@@ -221,12 +372,43 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                     print(f"Early stopping triggered at epoch {epoch+1}.")
                 break
 
+@torch.no_grad()
+def run_inference(model, test_dataloader, mask_tensor, criterion, metric, args, input_transform=None):
+    # load the best model Handle DDP 'module.' prefix
+    best_ckpt_path = os.path.join(args.checkpoint_dir, "best_model.pt")
+    model, _, _, _ = restore_model_checkpoint(model, optimizer, scheduler, best_ckpt_path, args.device)
+
+    model.eval()
+    mask_tensor_expanded = mask_tensor[None, None, :, :, None].to(args.device)
+    total_loss, total_metric = 0.0, 0.0
+    preds_all = []
+
+    for batch in tqdm(test_dataloader, desc="[Test]"):
+        input_tensor, target_tensor, _, _ = batch
+        frames_tensor = torch.cat((input_tensor, target_tensor), dim=1).unsqueeze(-1).to(args.device)
+        Bcur = frames_tensor.size(0)
+        _, real_input_flag = flags_eval(args,batch_size=Bcur)
+
+        loss, metric_value, preds = forward_step(
+            frames_tensor, real_input_flag,
+            model, criterion, metric,
+            mask_tensor_expanded, args,
+            input_transform, return_preds=True
+        )
+        total_loss += loss.item()
+        total_metric += metric_value.item()
+        preds_all.append(preds[:, args.input_window_size-1 : ].cpu())
+
+    avg_loss   = total_loss / len(test_dataloader)
+    avg_metric = total_metric / len(test_dataloader)
+    return avg_loss, avg_metric, torch.cat(preds_all, dim=0)
+
+
 # %%
 if __name__ == "__main__":
     # %%
     # === Defaults ===
     defaults = SimpleNamespace(
-        is_training=1,
         reverse_input=1,
         img_size=(256,288),
         img_channel=1,
@@ -267,6 +449,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_window_size', type=int, default=36, help='Output window size (number of timesteps)')
     parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
     parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
+    parser.add_argument('--is_training', type=int, default=0, help='Whether the model is in training mode')
     args, unknown = parser.parse_known_args()   
     args.total_window_size = args.input_window_size + args.output_window_size
     # === Merge them both ===
@@ -301,124 +484,6 @@ if __name__ == "__main__":
         return dist.is_available() and dist.is_initialized()       # useful for checking if we are in a distributed environment
     
     # %%
-    # === Defining schedule sampling functions ===
-    @torch.no_grad()
-    def reserve_schedule_sampling_exp(itr, args, dtype=torch.float32):
-        """
-        Reverse schedule sampling flags in GRID space.
-        Returns: real_input_flag of shape [B, T-2, H, W, C] (float32 on device)
-        """
-        B = args.batch_size
-        Tin = args.input_window_size
-        T   = args.total_window_size
-        H, W = args.img_size
-        C = args.img_channel
-        device = args.device
-
-        # r_eta / eta
-        if itr < args.r_sampling_step_1:
-            r_eta = 0.5
-        elif itr < args.r_sampling_step_2:
-            r_eta = 1.0 - 0.5 * math.exp(-(itr - args.r_sampling_step_1) / float(args.r_exp_alpha))
-        else:
-            r_eta = 1.0
-
-        if itr < args.r_sampling_step_1:
-            eta = 0.5
-        elif itr < args.r_sampling_step_2:
-            eta = 0.5 - (0.5 / (args.r_sampling_step_2 - args.r_sampling_step_1)) * (itr - args.r_sampling_step_1)
-        else:
-            eta = 0.0
-
-        # random flips → booleans
-        gen = None  # or pass a torch.Generator for reproducibility
-        r_true_token = (torch.rand(B, Tin - 1, device=device, generator=gen) < r_eta)
-        true_token   = (torch.rand(B, T - Tin - 1, device=device, generator=gen) < eta)
-
-        # build flags list per-sample/time (keep vectorized over HWC)
-        ones  = torch.ones (H, W, C, device=device, dtype=dtype)
-        zeros = torch.zeros(H, W, C, device=device, dtype=dtype)
-
-        # length = T-2
-        flags = []
-        for i in range(B):
-            row = []
-            # j = 0 .. T-3  → split at Tin-1
-            for j in range(T - 2):
-                if j < Tin - 1:
-                    row.append(ones if r_true_token[i, j] else zeros)
-                else:
-                    jj = j - (Tin - 1)
-                    row.append(ones if true_token[i, jj] else zeros)
-            flags.append(torch.stack(row, dim=0))   # [T-2,H,W,C]
-        real_input_flag = torch.stack(flags, dim=0) # [B,T-2,H,W,C]
-        return real_input_flag  # dtype float32
-
-
-    @torch.no_grad()
-    def schedule_sampling(eta, itr, args, dtype=torch.float32):
-        """
-        Forward schedule sampling flags in GRID space.
-        Returns: (eta_new, real_input_flag) with shape [B, T-Tin-1, H, W, C]
-        """
-        B = args.batch_size
-        Tin = args.input_window_size
-        T   = args.total_window_size
-        H, W = args.img_size
-        C = args.img_channel
-        device = args.device
-
-        if not getattr(args, "scheduled_sampling", True):
-            # zeros like original
-            rif = torch.zeros(B, T - Tin - 1, H, W, C, device=device, dtype=dtype)
-            return 0.0, rif
-
-        # update eta
-        if itr < args.sampling_stop_iter:
-            eta_new = eta - args.sampling_changing_rate
-        else:
-            eta_new = 0.0
-
-        # Bernoulli draws
-        gen = None
-        true_token = (torch.rand(B, T - Tin - 1, device=device, generator=gen) < eta_new)
-
-        ones  = torch.ones (H, W, C, device=device, dtype=dtype)
-        zeros = torch.zeros(H, W, C, device=device, dtype=dtype)
-
-        flags = []
-        for i in range(B):
-            row = [ones if true_token[i, j] else zeros for j in range(T - Tin - 1)]
-            flags.append(torch.stack(row, dim=0))   # [T-Tin-1,H,W,C]
-        real_input_flag = torch.stack(flags, dim=0) # [B,T-Tin-1,H,W,C]
-        return eta_new, real_input_flag
-    
-    @torch.no_grad()
-    def flags_eval(args):
-        B      = args.batch_size
-        Tin    = args.input_window_size
-        T      = args.total_window_size
-        H, W   = args.img_size
-        C      = args.img_channel
-        device = args.device
-        dtype  = torch.float32
-
-        if args.reverse_scheduled_sampling == 1:
-            L = T - 2  # reverse mode length
-            # timeline index j=0..T-3 corresponds to decisions for times 1..T-2
-            # set first Tin-1 to 1 (teacher forcing), rest 0
-            ones  = torch.ones (B, Tin-1, H, W, C, device=device, dtype=dtype)
-            zeros = torch.zeros(B, L-(Tin-1), H, W, C, device=device, dtype=dtype)
-            flags = torch.cat([ones, zeros], dim=1)  # [B,T-2,H,W,C]
-            eta   = None
-            return eta, flags
-        else:
-            L = T - Tin - 1  # forward mode length
-            flags = torch.zeros(B, L, H, W, C, device=device, dtype=dtype)  # pure open-loop
-            eta   = None
-            return eta, flags
-    
-    # %%
     # === Loading some topography and masking data ===
     orography = xr.open_dataset('orography.nc')
     RTMA_lat = orography.latitude.values    # Nx, Ny 2D arrays
@@ -431,6 +496,7 @@ if __name__ == "__main__":
     # %%
     zarr_store = 'data/NYSM.zarr'
     train_val_dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
+    test_dates_range = ['2023-03-26T02:00:00','2023-03-26T07:59:59']
     freq = '5min'
     data_seed = 42
 
@@ -568,23 +634,66 @@ if __name__ == "__main__":
 
     # %%
     # === Run the training and validation ===
-    if not dist.is_initialized() or dist.get_rank() == 0:
-        print("Starting training and validation...")
-    run_epochs(
-        model=model,
-        train_dataloader=train_dataloader,
-        val_dataloader=validation_dataloader,
-        optimizer=optimizer,
-        criterion=criterion,
-        metric=metric,
-        train_sampler=train_sampler, 
-        scheduler=scheduler,
-        early_stopping=early_stopping,
-        mask_tensor=mask_tensor,
-        input_transform=input_transform,
-        target_transform=target_transform,
-        args=args,
-    )
+    if args.is_training:
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print("Starting training and validation...")
+        run_epochs(
+            model=model,
+            train_dataloader=train_dataloader,
+            val_dataloader=validation_dataloader,
+            optimizer=optimizer,
+            criterion=criterion,
+            metric=metric,
+            train_sampler=train_sampler, 
+            scheduler=scheduler,
+            early_stopping=early_stopping,
+            mask_tensor=mask_tensor,
+            input_transform=input_transform,
+            target_transform=target_transform,
+            args=args,
+        )
+    else:
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print("Starting testing...")
+        test_dataset = nowcast_dataset(
+        zarr_store,
+        args.variable,
+        test_dates_range,
+        args.input_window_size,
+        args.output_window_size,
+        freq,
+        missing_times=None,
+        mode='test',
+        data_seed=data_seed,
+        step_size=args.input_window_size,
+        forecast_offset=args.forecast_offset
+        )
+
+        if is_distributed():
+            test_sampler = DistributedSampler(test_dataset)
+        else:
+            test_sampler = None
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=args.batch_size,
+            sampler=test_sampler,
+            shuffle=(test_sampler is None), # shuffle if not using DDP
+            pin_memory=True,prefetch_factor=4, persistent_workers=True,
+            num_workers=args.num_workers,
+            drop_last=False
+        )
+        if not dist.is_initialized() or dist.get_rank() == 0:
+            print("Data loaded successfully.")
+            print(f"Test dataset size: {len(test_dataset)}")
+        _, _, ds = run_inference(
+            model=model,
+            test_dataloader=test_dataloader,
+            criterion=criterion,
+            metric=metric,
+            mask_tensor=mask_tensor,
+            input_transform=input_transform,
+            args=args,
+        )
     # %%
     # === Barrier to ensure all ranks wait for checkpoint ===
     if dist.is_initialized():
