@@ -3,107 +3,56 @@ import torch.nn as nn
 from torchmetrics.image import PeakSignalNoiseRatio
 from torchmetrics.image import StructuralSimilarityIndexMeasure
 
-class MaskedMSELoss(nn.Module):
+class MaskedErrorLoss(nn.Module):
     """
-    Computes MSE loss:
-    - 'none': Per-sample MSE
-    - 'mean': Mean over batch
-    - 'global': MSE across entire batch (dataset-wide)
-
-    Usage:
-        criterion = MaskedMSELoss(mask_2d, reduction='mean')
-        loss = criterion(output, target, station_mask)
-    """
-    def __init__(self, mask_2d):
-        """
-        mask_2d: torch.Tensor [H, W]
-        reduction: 'none', 'mean', or 'global'
-        """
-        super().__init__()
-        self.register_buffer("mask_2d", mask_2d.float())
-
-    def forward(self, output, target, reduction='mean'):
-        """
-        output: [B, 1, H, W]
-        target: [B, 1, H, W]
-        station_mask: [B, 1, H, W]
-        """
-        assert reduction in ['none', 'mean', 'global']
-        B, C, H, W = output.shape
-        mask = self.mask_2d.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
-
-        # Apply valid mask (inside NY, not at stations)
-        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
-
-        # Compute per-sample MSE
-        se = (output - target) ** 2
-        masked_se = se * valid_mask
-
-        mse_sum_per_sample = masked_se.reshape(B, -1).sum(dim=1)
-        valid_counts = valid_mask.reshape(B, -1).sum(dim=1).clamp(min=1.0)
-        mse_per_sample = mse_sum_per_sample / valid_counts  # shape: [B]
-
-        if reduction == 'none':
-            return mse_per_sample  # [B]
-        elif reduction == 'mean':
-            return mse_per_sample.mean()  # scalar
-        elif reduction == 'global':
-            total_se = mse_sum_per_sample.sum()
-            total_valid = valid_counts.sum().clamp(min=1.0)
-            return total_se / total_valid  # scalar
-
-class MaskedRMSELoss(nn.Module):
-    """
-    Computes RMSE loss over masked regions.
+    Computes masked MSE, RMSE, or MAE.
     Supports:
-      - [B, C, H, W]  (channels first, CNN outputs)
-      - [B, T, H, W, C]  (channels last, sequence models)
+      - [B, C, H, W]
+      - [B, T, H, W, C]
     """
     def __init__(self, mask_2d):
-        """
-        mask_2d: torch.Tensor [H, W], values {0,1}
-        """
         super().__init__()
         self.register_buffer("mask_2d", mask_2d.float())
 
-    def forward(self, output, target, reduction='mean'):
+    def forward(self, output, target, mode='mae',reduction='mean'):
         """
-        output: [B,C,H,W] or [B,T,H,W,C]
-        target: same shape
-        reduction: 'mean' | 'none' | 'global'
+        mode: 'mse', 'rmse', 'mae'
+        reduction: 'mean' or 'none'
         """
-        assert reduction in ['mean', 'none', 'global']
         if output.shape != target.shape:
             raise ValueError(f"Shape mismatch: {output.shape} vs {target.shape}")
 
         ndim = output.ndim
         if ndim == 4:
-            # [B,C,H,W]
             B, C, H, W = output.shape
-            mask = self.mask_2d[None, None, :, :].expand(B, C, H, W)  # [B,C,H,W]
+            mask = self.mask_2d[None, None, :, :].expand(B, C, H, W)
         elif ndim == 5:
-            # [B,T,H,W,C]
             B, T, H, W, C = output.shape
-            mask = self.mask_2d[None, None, :, :, None].expand(B, T, H, W, C)  # [B,T,H,W,C]
+            mask = self.mask_2d[None, None, :, :, None].expand(B, T, H, W, C)
         else:
             raise ValueError(f"Unsupported ndim={ndim}")
 
-        se = (output - target) ** 2
-        masked_se = se * mask
+        diff = output - target
+        if mode in ['mse', 'rmse']:
+            err = diff ** 2
+        elif mode == 'mae':
+            err = diff.abs()
 
-        # collapse to [B, -1]
-        se_sum = masked_se.reshape(output.shape[0], -1).sum(dim=1)   # [B]
+        masked_err = err * mask
+        err_sum = masked_err.reshape(output.shape[0], -1).sum(dim=1)   # [B]
         valid_counts = mask.reshape(output.shape[0], -1).sum(dim=1).clamp(min=1.0)
-        rmse_per_sample = torch.sqrt(se_sum / valid_counts)  # [B]
 
-        if reduction == 'none':
-            return rmse_per_sample
-        elif reduction == 'mean':
-            return rmse_per_sample.mean()
-        elif reduction == 'global':
-            total_se = se_sum.sum()
-            total_count = valid_counts.sum().clamp(min=1.0)
-            return torch.sqrt(total_se / total_count)
+        per_sample = err_sum / valid_counts
+
+        if mode == 'rmse':
+            per_sample = torch.sqrt(per_sample)
+
+        if reduction == 'mean':
+            return per_sample.mean()
+        elif reduction == 'none':
+            return err_sum, valid_counts
+        else:
+            raise ValueError(f"Unsupported reduction={reduction}")
         
     
 class MaskedTVLoss(nn.Module):
