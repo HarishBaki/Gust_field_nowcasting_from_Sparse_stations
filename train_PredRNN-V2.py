@@ -33,7 +33,7 @@ from models.SwinT2_UNet import SwinT2UNet
 from models.util import initialize_weights_xavier,initialize_weights_he
 from models import predrnn_v2
 
-from losses import MaskedMSELoss, MaskedRMSELoss, MaskedTVLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
+from losses import MaskedErrorLoss, MaskedTVLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
 
 from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store, reshape_patch, reshape_patch_back
 
@@ -221,7 +221,8 @@ def forward_step(frames_tensor, real_input_flag,
 
     metric_value = metric(
         masked_next_frames[:, args.input_window_size-1:],
-        masked_frames_tensor[:, args.input_window_size:]
+        masked_frames_tensor[:, args.input_window_size:],
+        mode='mse', reduction='mean'
     )
 
     if return_preds:
@@ -601,7 +602,7 @@ if __name__ == "__main__":
     elif args.loss_name == "MaskedCombinedMAEQuantileLoss":
         criterion = MaskedCombinedMAEQuantileLoss(mask_tensor, tau=0.95, mae_weight=0.5, quantile_weight=0.5)
     
-    metric = MaskedRMSELoss(mask_tensor)
+    metric = MaskedErrorLoss(mask_tensor).to(args.device)
 
     # === Optimizer, scheduler, and early stopping ===
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
