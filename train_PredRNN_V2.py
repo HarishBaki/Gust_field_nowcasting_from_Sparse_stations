@@ -209,7 +209,8 @@ def forward_step(frames_tensor, real_input_flag,
     masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
 
     # Compute loss
-    loss = criterion(masked_next_frames, masked_frames_tensor[:, 1:]) + decouple_loss
+    if criterion is not None:
+        loss = criterion(masked_next_frames, masked_frames_tensor[:, 1:]) + decouple_loss
 
     # Metric on inverse-transformed data if needed
     if input_transform is not None:
@@ -219,16 +220,36 @@ def forward_step(frames_tensor, real_input_flag,
         next_frames = input_transform.inverse(next_frames)
         masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
 
-    metric_value = metric(
-        masked_next_frames[:, args.input_window_size-1:],
-        masked_frames_tensor[:, args.input_window_size:],
-        mode='mse', reduction='mean'
-    )
+    if metric is not None:
+        metric_value = metric(
+            masked_next_frames[:, args.input_window_size-1:],
+            masked_frames_tensor[:, args.input_window_size:],
+            mode='mse', reduction='mean'
+        )
 
-    if return_preds:
-        return loss, metric_value, masked_next_frames
-    else:
-        return loss, metric_value
+    if (criterion is not None) and (metric is not None):
+        if return_preds:
+            return loss, metric_value, masked_next_frames
+        else:
+            return loss, metric_value
+
+    elif (criterion is not None) and (metric is None):
+        if return_preds:
+            return loss, masked_next_frames
+        else:
+            return loss
+
+    elif (criterion is None) and (metric is not None):
+        if return_preds:
+            return metric_value, masked_next_frames
+        else:
+            return metric_value
+
+    else:  # criterion is None and metric is None
+        if return_preds:
+            return masked_next_frames
+        else:
+            return None  # or: raise ValueError("Nothing to return")
 
 def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, metric,
                train_sampler, scheduler, early_stopping, mask_tensor,input_transform=None,target_transform=None,
@@ -560,7 +581,7 @@ if __name__ == "__main__":
         missing_times=None,
         mode=mode,
         data_seed=data_seed,
-        step_size=args.input_window_size,
+        step_size=args.output_window_size,  # non-overlapping time-series in validation
         forecast_offset=args.forecast_offset
     )
 
@@ -666,7 +687,7 @@ if __name__ == "__main__":
         missing_times=None,
         mode='test',
         data_seed=data_seed,
-        step_size=args.input_window_size,
+        step_size=args.output_window_size,  # non-overlapping time-series in validation
         forecast_offset=args.forecast_offset
         )
 
