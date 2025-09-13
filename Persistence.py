@@ -34,6 +34,15 @@ from losses import MaskedErrorLoss, MaskedTVLoss, MaskedCharbonnierLoss, MaskedC
 
 from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store
 
+"""
+# Computing persistance error
+- My nowcast_dataset is designed to output input_tensor with a size of [B,input_window_size,H,W] and target_tensor with a size of [B,output_window_size,H,W]
+- For persistance error computation, we set the last instance of inputs as the target for next ouput_window_size. 
+- That means, get samples with input_window_size = 1, while varying the output_window_size over {1:72} for {5min:5hrs}.
+- Now, the target_tensor is infact the reference, while input_tensor[:,-1].unsqueeze(1).repeat(1, args.output_window_size, 1, 1)  # [B, output_window_size, H, W] becomes the persistance model output. 
+- Compute the loss for varying output_window_sizes 
+"""
+
 # %%
 if __name__ == "__main__":   
     # %%   

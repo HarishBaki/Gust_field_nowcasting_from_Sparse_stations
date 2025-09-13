@@ -78,7 +78,7 @@ export PYTHONPATH=/tmp/python/local/lib/python3.12/site-packages:/tmp/python/loc
 # ===============================
 # Run the training script
 # ===============================
-torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredRNN-V2.py \
+torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredRNN_V2.py \
   --variable "$variable" \
   --checkpoint_dir "$checkpoint_dir" \
   --model_name "$model_name" \
