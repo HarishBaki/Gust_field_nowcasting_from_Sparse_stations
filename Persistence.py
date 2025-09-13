@@ -184,7 +184,7 @@ if __name__ == "__main__":
         rmse = np.sqrt(mse)
 
     # save to a text file
-    target_path = f'{args.prediction_dir}/Persistence/{args.data_type}'
+    target_path = f'{args.prediction_dir}/Persistence/{args.data_type}/freq_{args.freq}'
     os.makedirs(target_path, exist_ok=True)
     with open(f'{target_path}/Horizon_{args.output_window_size}.txt', 'w') as f:
         f.write(f'MAE: {mae:.4f}\n')
