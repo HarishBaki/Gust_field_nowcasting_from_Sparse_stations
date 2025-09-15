@@ -611,14 +611,8 @@ if __name__ == "__main__":
     if is_distributed():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
-    # Define the loss criterion and metric here, based on input loss name. The functions are sent to the GPU inside
-    if args.loss_name == "MaskedMSELoss":
-        criterion = MaskedMSELoss(mask_tensor)
-    elif args.loss_name == "MaskedRMSELoss":
-        criterion = MaskedRMSELoss(mask_tensor)
-    elif args.loss_name == "MaskedTVLoss":
-        criterion = MaskedTVLoss(mask_tensor,tv_loss_weight=0.001, beta=0.5)    
-    elif args.loss_name == "MaskedCharbonnierLoss":
+    # Define the loss criterion and metric here, based on input loss name. The functions are sent to the GPU inside 
+    if args.loss_name == "MaskedCharbonnierLoss":
         criterion = MaskedCharbonnierLoss(mask_tensor,eps=1e-3)
     elif args.loss_name == "MaskedCombinedMAEQuantileLoss":
         criterion = MaskedCombinedMAEQuantileLoss(mask_tensor, tau=0.95, mae_weight=0.5, quantile_weight=0.5)
