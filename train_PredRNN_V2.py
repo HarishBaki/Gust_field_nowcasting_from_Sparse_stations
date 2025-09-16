@@ -51,8 +51,8 @@ def reserve_schedule_sampling_exp(itr, args, batch_size=None, dtype=torch.float3
     Returns: real_input_flag of shape [B, T-2, H, W, C] (float32 on device)
     """
     B   = batch_size if batch_size is not None else args.batch_size
-    Tin = args.input_window_size
-    T   = args.total_window_size
+    Tin = args.input_sequence_length
+    T   = args.total_sequence_length
     H, W = args.img_size
     C = args.img_channel
     device = args.device
@@ -104,8 +104,8 @@ def schedule_sampling(eta, itr, args, batch_size=None, dtype=torch.float32):
     Returns: (eta_new, real_input_flag) with shape [B, T-Tin-1, H, W, C]
     """
     B   = batch_size if batch_size is not None else args.batch_size
-    Tin = args.input_window_size
-    T   = args.total_window_size
+    Tin = args.input_sequence_length
+    T   = args.total_sequence_length
     H, W = args.img_size
     C = args.img_channel
     device = args.device
@@ -138,8 +138,8 @@ def schedule_sampling(eta, itr, args, batch_size=None, dtype=torch.float32):
 @torch.no_grad()
 def flags_eval(args, batch_size=None):
     B   = batch_size if batch_size is not None else args.batch_size
-    Tin    = args.input_window_size
-    T      = args.total_window_size
+    Tin    = args.input_sequence_length
+    T      = args.total_sequence_length
     H, W   = args.img_size
     C      = args.img_channel
     device = args.device
@@ -182,7 +182,7 @@ def forward_step(frames_tensor, real_input_flag,
     mask_tensor_expanded : torch.Tensor
         Mask of shape [1,1,H,W,1]
     args : Namespace
-        Holds config (patch_size, input_window_size, etc.)
+        Holds config (patch_size, input_sequence_length, etc.)
     input_transform : Transform, optional
         Transformation with .__call__ and .inverse
     return_preds : bool, optional
@@ -222,8 +222,8 @@ def forward_step(frames_tensor, real_input_flag,
 
     if metric is not None:
         metric_value = metric(
-            masked_next_frames[:, args.input_window_size-1:],
-            masked_frames_tensor[:, args.input_window_size:],
+            masked_next_frames[:, args.input_sequence_length-1:],
+            masked_frames_tensor[:, args.input_sequence_length:],
             mode='mse', reduction='mean'
         )
 
@@ -419,7 +419,7 @@ def run_inference(model, test_dataloader, mask_tensor, criterion, metric, args, 
         )
         total_loss += loss.item()
         total_metric += metric_value.item()
-        preds_all.append(preds[:, args.input_window_size-1 : ].cpu())
+        preds_all.append(preds[:, args.input_sequence_length-1 : ].cpu())
 
     avg_loss   = total_loss / len(test_dataloader)
     avg_metric = total_metric / len(test_dataloader)
@@ -467,13 +467,13 @@ if __name__ == "__main__":
     parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     parser.add_argument('--loss_name', type=str, default='MaskedCharbonnierLoss', help='Loss function name')
     parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
-    parser.add_argument('--input_window_size', type=int, default=36, help='Input window size (number of timesteps)')
-    parser.add_argument('--output_window_size', type=int, default=36, help='Output window size (number of timesteps)')
+    parser.add_argument('--input_sequence_length', type=int, default=36, help='Input window size (number of timesteps)')
+    parser.add_argument('--output_sequence_length', type=int, default=36, help='Output window size (number of timesteps)')
     parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
     parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
     parser.add_argument('--is_training', type=int, default=0, help='Whether the model is in training mode')
     args, unknown = parser.parse_known_args()   
-    args.total_window_size = args.input_window_size + args.output_window_size
+    args.total_sequence_length = args.input_sequence_length + args.output_sequence_length
     # === Merge them both ===
     merged = {**vars(defaults), **vars(args)} 
 
@@ -484,7 +484,7 @@ if __name__ == "__main__":
     args.checkpoint_dir = f"{args.checkpoint_dir}/{args.model_name}"
     args.checkpoint_dir = f"{args.checkpoint_dir}/{args.loss_name}"
     args.checkpoint_dir = f"{args.checkpoint_dir}/{args.transform}"
-    args.checkpoint_dir =  f"{args.checkpoint_dir}/in_window-{args.input_window_size}_out_window-{args.output_window_size}-step-{args.step_size}_offset-{args.forecast_offset}"
+    args.checkpoint_dir =  f"{args.checkpoint_dir}/in_window-{args.input_sequence_length}_out_window-{args.output_sequence_length}-step-{args.step_size}_offset-{args.forecast_offset}"
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # ==================== Distributed setup ====================
@@ -546,8 +546,8 @@ if __name__ == "__main__":
         zarr_store,
         args.variable,
         train_val_dates_range,
-        args.input_window_size,
-        args.output_window_size,
+        args.input_sequence_length,
+        args.output_sequence_length,
         freq,
         missing_times=None,
         mode=mode,
@@ -575,13 +575,13 @@ if __name__ == "__main__":
         zarr_store,
         args.variable,
         train_val_dates_range,
-        args.input_window_size,
-        args.output_window_size,
+        args.input_sequence_length,
+        args.output_sequence_length,
         freq,
         missing_times=None,
         mode=mode,
         data_seed=data_seed,
-        step_size=args.output_window_size,  # non-overlapping time-series in validation
+        step_size=args.output_sequence_length,  # non-overlapping time-series in validation
         forecast_offset=args.forecast_offset
     )
 
@@ -638,8 +638,8 @@ if __name__ == "__main__":
                 "num_workers": args.num_workers,
                 "weights_seed": args.weights_seed,
                 "loss_name": args.loss_name,
-                "input_window_size": args.input_window_size,
-                "output_window_size": args.output_window_size,
+                "input_sequence_length": args.input_sequence_length,
+                "output_sequence_length": args.output_sequence_length,
                 "train_val_dates_range": train_val_dates_range,
                 "transform": args.transform,
                 "patch_size": args.patch_size,
@@ -675,13 +675,13 @@ if __name__ == "__main__":
         zarr_store,
         args.variable,
         test_dates_range,
-        args.input_window_size,
-        args.output_window_size,
+        args.input_sequence_length,
+        args.output_sequence_length,
         freq,
         missing_times=None,
         mode='test',
         data_seed=data_seed,
-        step_size=args.output_window_size,  # non-overlapping time-series in validation
+        step_size=args.output_sequence_length,  # non-overlapping time-series in validation
         forecast_offset=args.forecast_offset
         )
 

@@ -57,7 +57,7 @@ class Transform:
             return x * (p2 - p1) + p1
     
 class nowcast_dataset(Dataset):
-    def __init__(self,zarr_store, variable, dates_range, input_window_size, output_window_size, freq,
+    def __init__(self,zarr_store, variable, dates_range, input_sequence_length, output_sequence_length, freq,
                  missing_times=None, mode='train',data_seed=42,
                  step_size=1, forecast_offset=0):
         # create a pandas timetime index for the entire training and validation period
@@ -71,11 +71,11 @@ class nowcast_dataset(Dataset):
         # create input and output samples by sliding the input window over the entire training and validation period
         in_samples = []
         out_samples = []
-        max_idx  = len(reference_dates) - input_window_size - output_window_size - forecast_offset + 1
+        max_idx  = len(reference_dates) - input_sequence_length - output_sequence_length - forecast_offset + 1
         for i in range(0, max_idx, step_size):
-            in_samples.append(reference_dates[i:i+input_window_size])
-            out_start = i + input_window_size + forecast_offset
-            out_end = out_start + output_window_size
+            in_samples.append(reference_dates[i:i+input_sequence_length])
+            out_start = i + input_sequence_length + forecast_offset
+            out_end = out_start + output_sequence_length
             if out_end > len(reference_dates):
                 break
             out_samples.append(reference_dates[out_start:out_end])
@@ -179,8 +179,8 @@ if __name__ == "__main__":
     variable = 'i10fg'
     dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
     freq = '5min'
-    input_window_size = 3  # 3 hours at every 5 minutes
-    output_window_size = 1  # 1 hour at every 5 minutes
+    input_sequence_length = 3  # 3 hours at every 5 minutes
+    output_sequence_length = 1  # 1 hour at every 5 minutes
     data_seed = 42
     mode = 'train'
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -209,8 +209,8 @@ if __name__ == "__main__":
         zarr_store,
         'i10fg',
         dates_range,
-        input_window_size,
-        output_window_size,
+        input_sequence_length,
+        output_sequence_length,
         freq,
         missing_times=None,
         mode=mode,

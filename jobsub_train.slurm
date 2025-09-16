@@ -38,8 +38,8 @@ weights_seed=${weights_seed:-42}
 num_epochs=${num_epochs:-200}
 loss_name=${loss_name:-'MaskedCharbonnierLoss'}
 resume=${resume:-'false'}
-input_window_size=${input_window_size:-36}
-output_window_size=${output_window_size:-36}
+input_sequence_length=${input_sequence_length:-36}
+output_sequence_length=${output_sequence_length:-36}
 step_size=${step_size:-1}
 forecast_offset=${forecast_offset:-0}
 is_training=${is_training:-1}
@@ -61,8 +61,8 @@ echo "Weights Seed:             $weights_seed"
 echo "Num Epochs:               $num_epochs"
 echo "Loss Function:            $loss_name"
 echo "Resume from Checkpoint:   $resume"
-echo "Input Window Size:        $input_window_size"
-echo "Output Window Size:       $output_window_size"
+echo "Input Window Size:        $input_sequence_length"
+echo "Output Window Size:       $output_sequence_length"
 echo "Step Size:                $step_size"
 echo "Forecast Offset:          $forecast_offset"
 echo "Is Training:              $is_training"
@@ -89,8 +89,8 @@ torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredR
   --weights_seed "$weights_seed" \
   --num_epochs "$num_epochs" \
   --loss_name "$loss_name" \
-  --input_window_size "$input_window_size" \
-  --output_window_size "$output_window_size" \
+  --input_sequence_length "$input_sequence_length" \
+  --output_sequence_length "$output_sequence_length" \
   --step_size "$step_size" \
   --forecast_offset "$forecast_offset" \
   --is_training "$is_training" \

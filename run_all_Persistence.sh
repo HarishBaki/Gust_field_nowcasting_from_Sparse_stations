@@ -16,9 +16,9 @@ for i in "${!data_types[@]}"; do
     else
         horizon_max=6
     fi
-    for output_window_size in $(seq 1 $horizon_max); do
-        sbatch --job-name="persist_${data_type}_${output_window_size}" \
-            --export=data_type="${data_type}",zarr_store="${zarr_store}",freq="${freq}",output_window_size="${output_window_size}" \
+    for output_sequence_length in $(seq 1 $horizon_max); do
+        sbatch --job-name="persist_${data_type}_${output_sequence_length}" \
+            --export=data_type="${data_type}",zarr_store="${zarr_store}",freq="${freq}",output_sequence_length="${output_sequence_length}" \
             jobsub_Persistence.slurm
     done
 done

@@ -10,12 +10,12 @@ def data_provider(configs):
  
     if configs.dataset_name == 'radar':
         test_input_param = {
-                            'image_width': configs.img_width,
-                            'image_height': configs.img_height,
+                            'image_width': configs.img_size[1],
+                            'image_height': configs.img_size[0],
                             'input_data_type': 'float32',
                             'is_output_sequence': True,
                             'name': configs.dataset_name + 'test iterator',
-                            'total_length': configs.total_length,
+                            'total_sequence_length': configs.total_sequence_length,
                             'data_path': configs.dataset_path,
                             'type': 'test',
                             }

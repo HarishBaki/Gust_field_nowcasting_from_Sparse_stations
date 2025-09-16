@@ -3,14 +3,14 @@ import torch.nn as nn
 from nowcastnet.layers.utils import spectral_norm
 
 class Noise_Projector(nn.Module):
-    def __init__(self, input_length, configs):
+    def __init__(self, input_sequence_length, configs):
         super(Noise_Projector, self).__init__()
-        self.input_length = input_length
-        self.conv_first = spectral_norm(nn.Conv2d(self.input_length, self.input_length * 2, kernel_size=3, padding=1))
-        self.L1 = ProjBlock(self.input_length * 2, self.input_length * 4)
-        self.L2 = ProjBlock(self.input_length * 4, self.input_length * 8)
-        self.L3 = ProjBlock(self.input_length * 8, self.input_length * 16)
-        self.L4 = ProjBlock(self.input_length * 16, self.input_length * 32)
+        self.input_sequence_length = input_sequence_length
+        self.conv_first = spectral_norm(nn.Conv2d(self.input_sequence_length, self.input_sequence_length * 2, kernel_size=3, padding=1))
+        self.L1 = ProjBlock(self.input_sequence_length * 2, self.input_sequence_length * 4)
+        self.L2 = ProjBlock(self.input_sequence_length * 4, self.input_sequence_length * 8)
+        self.L3 = ProjBlock(self.input_sequence_length * 8, self.input_sequence_length * 16)
+        self.L4 = ProjBlock(self.input_sequence_length * 16, self.input_sequence_length * 32)
 
     def forward(self, x):
         x = self.conv_first(x)
