@@ -4,9 +4,9 @@
 #SBATCH --output=slurmout/ddp_train-%j.out
 #SBATCH --error=slurmout/ddp_train-%j.err
 #SBATCH --time=07-00:00:00
-#SBATCH --mem=640gb
+##SBATCH --mem=640gb
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --exclude=dgx02
@@ -29,9 +29,9 @@ export MASTER_PORT=$((20000 + RANDOM % 20000))
 # ===============================
 variable=${variable:-'i10fg'}
 checkpoint_dir=${checkpoint_dir:-'checkpoints'}
-model_name=${model_name:-'predrnn_v2'}
+model_name=${model_name:-'nowcastnet'}
 activation_layer=${activation_layer:-'gelu'}
-transform=${transform:-'minmax'}
+transform=${transform:-'none'}
 batch_size=${batch_size:-12}
 num_workers=${num_workers:-16}
 weights_seed=${weights_seed:-42}
@@ -43,6 +43,7 @@ output_sequence_length=${output_sequence_length:-36}
 step_size=${step_size:-1}
 forecast_offset=${forecast_offset:-0}
 is_training=${is_training:-1}
+train_mode=${train_mode:-0} # 0 for evolution network, 1 for nowcastnet network
 
 # ===============================
 # Echo all config values
@@ -66,6 +67,7 @@ echo "Output Window Size:       $output_sequence_length"
 echo "Step Size:                $step_size"
 echo "Forecast Offset:          $forecast_offset"
 echo "Is Training:              $is_training"
+echo "Train Mode:               $train_mode"
 echo "======================================"
 
 export PYTHONNOUSERSITE=1   # make Python use the system site-packages, not from local user
@@ -78,7 +80,7 @@ export PYTHONPATH=/tmp/python/local/lib/python3.12/site-packages:/tmp/python/loc
 # ===============================
 # Run the training script
 # ===============================
-torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredRNN_V2.py \
+torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_nowcastnet.py \
   --variable "$variable" \
   --checkpoint_dir "$checkpoint_dir" \
   --model_name "$model_name" \
@@ -94,4 +96,5 @@ torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredR
   --step_size "$step_size" \
   --forecast_offset "$forecast_offset" \
   --is_training "$is_training" \
+  --train_mode "$train_mode" \
   $( [ "$resume" = "true" ] && echo "--resume" )

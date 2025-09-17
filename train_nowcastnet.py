@@ -80,7 +80,7 @@ def train_evolution_net(train_dataloader, train_sampler,args):
                     [-1., -2., -1.]], device=args.device).view(1,1,3,3)
     # %%
     # === Iteration setup ===
-    max_iters = 10
+    max_iters = 300_000  # total number of iterations to train
     global_step = start_step
 
     if not dist.is_initialized() or dist.get_rank() == 0:
