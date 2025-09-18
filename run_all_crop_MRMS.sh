@@ -4,9 +4,9 @@
 OUTDIR="data/MRMS_grib_data"
 TARGET_GRID="data/orography_grid_cf.nc"
 
-START=20201014
-END=20250826
-MAXJOBS=64
+START=20240217 # Start date in YYYYMMDD format
+END=20250826 # End date in YYYYMMDD format
+MAXJOBS=128
 
 d="$START"
 while [ "$d" -le "$END" ]; do

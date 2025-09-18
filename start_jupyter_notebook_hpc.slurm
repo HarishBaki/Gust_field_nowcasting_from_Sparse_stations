@@ -6,7 +6,7 @@
 #SBATCH --time=01-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=64
+#SBATCH --cpus-per-task=128
 
 # Load conda init script
 source /network/rit/lab/basulab/Anaconda3/etc/profile.d/conda.sh
