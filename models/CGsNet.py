@@ -1,8 +1,8 @@
+# %%
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from argparse import ArgumentParser
-
 
 # ------------------------------
 # Core Model (Pure PyTorch)
@@ -79,7 +79,6 @@ class CGsNet(nn.Module):
         returns:
             encoder_frames (B, Tin-1, C_out?, H, W)  [as in original]
             decoder_frames (B, Tout,  C_out,  H, W)
-            phys_filter_encoder, phys_filter_decoder (conv weights for viz)
         """
         device = input_tensor.device
         batch = input_tensor.shape[0]
@@ -116,7 +115,11 @@ class CGsNet(nn.Module):
 
         # Last encoder step (no first_timestep flag)
         h_t, c_t, phys_h_t, encoder_phys, encoder_conv, output_image, output_att = self.encoder(
-            input_tensor[:, -1]
+            input_tensor[:, -1],
+            first_timestep=False,
+            h_t=h_t,
+            c_t=c_t,
+            phys_h_t=phys_h_t,
         )
         encoder_att.append(output_att)
         encoder_att = torch.stack(encoder_att, dim=1)  # (B, Tin, C_att, H, W)
@@ -141,10 +144,8 @@ class CGsNet(nn.Module):
 
         encoder_frames = torch.stack(encoder_frames, dim=1) if len(encoder_frames) > 0 else None
         decoder_frames = torch.stack(decoder_frames, dim=1)
-        phys_filter_encoder = self.encoder.phycell.cell_list[0].F.conv1.weight
-        phys_filter_decoder = self.decoder.phycell.cell_list[0].F.conv1.weight
 
-        return encoder_frames, decoder_frames, phys_filter_encoder, phys_filter_decoder
+        return encoder_frames, decoder_frames
 
 
 # ------------------------------
@@ -314,7 +315,7 @@ class PhyCell_Cell(nn.Module):
 
         self.F = nn.Sequential(
             nn.Conv2d(in_channels=input_dim, out_channels=F_hidden_dim, kernel_size=self.kernel_size, stride=1, padding=self.padding),
-            nn.GroupNorm(7, F_hidden_dim),
+            nn.GroupNorm(4, F_hidden_dim),
             nn.Conv2d(in_channels=F_hidden_dim, out_channels=input_dim, kernel_size=(1, 1), stride=1, padding=0),
         )
 
@@ -628,52 +629,51 @@ class decoder_specific(nn.Module):
         d2 = self.upc2(d1)
         return d2
 
-
-# ------------------------------
-# CLI (Torch-only)
-# ------------------------------
-
-def build_argparser():
-    parser = ArgumentParser()
-    # Required geometry / sequence lengths
-    parser.add_argument("--height", type=int, default=256)
-    parser.add_argument("--width", type=int, default=288)
-    parser.add_argument("--num_channels_in", type=int, default=1)
-    parser.add_argument("--num_channels_out", type=int, default=1)
-    parser.add_argument("--input_length", type=int, default=36)
-    parser.add_argument("--target_length", type=int, default=36)
-    parser.add_argument("--downscale_factor", type=int, default=4)
-
-    # RNN / CNN dims
-    parser.add_argument("--cnn_hidden_size", type=int, default=64)
-    parser.add_argument("--rnn_input_dim", type=int, default=64)
-    parser.add_argument("--phycell_hidden_dims", nargs="+", type=int, default=[64])
-    parser.add_argument("--kernel_size_phycell", type=int, default=3)
-    parser.add_argument("--convlstm_hidden_dims", nargs="+", type=int, default=[64])
-    parser.add_argument("--kernel_size_convlstm", type=int, default=3)
-
-    return parser
-
-
+# %%
 if __name__ == "__main__":
-    parser = build_argparser()
-    args = parser.parse_args()
-    dict_args = vars(args)
-
+    # %%
+    height=64
+    width=64
+    input_length=36
+    target_length=36
+    downscale_factor=4
+    num_channels_in=1
+    num_channels_out=1
+    cnn_hidden_size=64
+    rnn_input_dim=64
+    phycell_hidden_dims=[64]
+    kernel_size_phycell=3
+    convlstm_hidden_dims=[64]
+    kernel_size_convlstm=3
+    # %%
     # Instantiate model
-    model = CGsNet(**dict_args)
+    model = CGsNet(
+        height=height,
+        width=width,
+        input_length=input_length,
+        target_length=target_length,
+        downscale_factor=downscale_factor,
+        num_channels_in=num_channels_in,
+        num_channels_out=num_channels_out,
+        cnn_hidden_size=cnn_hidden_size,
+        rnn_input_dim=rnn_input_dim,
+        phycell_hidden_dims=phycell_hidden_dims,
+        kernel_size_phycell=kernel_size_phycell,
+        convlstm_hidden_dims=convlstm_hidden_dims,
+        kernel_size_convlstm=kernel_size_convlstm,
+    )
 
+    # %%
     # Quick sanity run
-    B, Tin = 2, args.input_length
-    C_in = args.num_channels_in
-    H, W = args.height, args.width
+    B, Tin = 2, input_length
+    C_in = num_channels_in
+    H, W = height, width
 
     x = torch.randn(B, Tin, C_in, H, W)
-    enc_frames, dec_frames, w_enc, w_dec = model(x, None, False)
+    enc_frames, dec_frames = model(x, None, False)
 
     print(
         "encoder_frames:", None if enc_frames is None else tuple(enc_frames.shape),
         "\ndecoder_frames:", tuple(dec_frames.shape),
-        "\nphys_filter_encoder:", tuple(w_enc.shape),
-        "\nphys_filter_decoder:", tuple(w_dec.shape),
     )
+# %%
