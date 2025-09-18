@@ -60,7 +60,7 @@ class RNN(nn.Module):
 
         memory = torch.zeros([batch, self.num_hidden[0], height, width]).to(self.configs.device)
 
-        for t in range(self.configs.total_window_size - 1):
+        for t in range(self.configs.total_sequence_length - 1):
 
             if self.configs.reverse_scheduled_sampling == 1:
                 # reverse schedule sampling
@@ -70,11 +70,11 @@ class RNN(nn.Module):
                     net = mask_true[:, t - 1] * frames[:, t] + (1 - mask_true[:, t - 1]) * x_gen
             else:
                 # schedule sampling
-                if t < self.configs.input_length:
+                if t < self.configs.input_sequence_length:
                     net = frames[:, t]
                 else:
-                    net = mask_true[:, t - self.configs.input_length] * frames[:, t] + \
-                          (1 - mask_true[:, t - self.configs.input_length]) * x_gen
+                    net = mask_true[:, t - self.configs.input_sequence_length] * frames[:, t] + \
+                          (1 - mask_true[:, t - self.configs.input_sequence_length]) * x_gen
 
             h_t[0], c_t[0], memory, delta_c, delta_m = self.cell_list[0](net, h_t[0], c_t[0], memory)
             delta_c_list[0] = F.normalize(self.adapter(delta_c).view(delta_c.shape[0], delta_c.shape[1], -1), dim=2)

@@ -11,9 +11,9 @@ class InputHandle(Dataset):
     def __init__(self, input_param):
         self.input_data_type = input_param.get('input_data_type', 'float32')
         self.output_data_type = input_param.get('output_data_type', 'float32')
-        self.img_width = input_param['image_width']
-        self.img_height = input_param['image_height']
-        self.length = input_param['total_length']
+        self.img_size[1] = input_param['image_width']
+        self.img_size[0] = input_param['image_height']
+        self.length = input_param['total_sequence_length']
         self.data_path = input_param['data_path']
         self.type = input_param['type'] #train/test/valid
 
@@ -42,7 +42,7 @@ class InputHandle(Dataset):
         mask[data < 0] = 0
         data[data < 0] = 0
         data = np.clip(data, 0, 128)
-        vid = np.zeros((self.length, self.img_height, self.img_width, 2))
+        vid = np.zeros((self.length, self.img_size[0], self.img_size[1], 2))
         vid[..., 0] = data
         vid[..., 1] = mask
         img = dict()

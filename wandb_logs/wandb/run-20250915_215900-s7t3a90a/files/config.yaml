@@ -1,0 +1,85 @@
+_wandb:
+    value:
+        cli_version: 0.21.1
+        e:
+            joqwhqcc1xoqa5prv9aw0w6eacawv6vl:
+                codePath: train_nowcastnet.py
+                codePathLocal: train_nowcastnet.py
+                cpu_count: 64
+                cpu_count_logical: 128
+                cudaVersion: "12.4"
+                disk:
+                    /:
+                        total: "3778773131264"
+                        used: "3282761347072"
+                email: harish.iiitn@gmail.com
+                executable: /home/harish/miniconda3/envs/gUstNET/bin/python
+                git:
+                    commit: c83963f15c08567aece36d1c138ee68d21f0d3be
+                    remote: https://github.com/HarishBaki/Gust_field_nowcasting_from_Sparse_stations.git
+                gpu: NVIDIA RTX A6000
+                gpu_count: 3
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 10752
+                      memoryTotal: "51527024640"
+                      name: NVIDIA RTX A6000
+                      uuid: GPU-c003d7be-591c-c34f-10ac-9e9477447544
+                    - architecture: Ampere
+                      cudaCores: 10752
+                      memoryTotal: "51527024640"
+                      name: NVIDIA RTX A6000
+                      uuid: GPU-5d2bd051-f0cf-de53-9666-496d0e2a2702
+                    - architecture: Ampere
+                      cudaCores: 10752
+                      memoryTotal: "51527024640"
+                      name: NVIDIA RTX A6000
+                      uuid: GPU-dbc25f8a-f95d-3de8-3afc-0c3dd6434d44
+                host: Chaos
+                memory:
+                    total: "540615110656"
+                os: Linux-6.8.0-78-generic-x86_64-with-glibc2.35
+                program: /home/harish/Ongoing_Research/Gust_field_nowcasting_from_Sparse_stations/train_nowcastnet.py
+                python: CPython 3.9.18
+                root: wandb_logs
+                startedAt: "2025-09-16T01:59:00.133759Z"
+                writerId: joqwhqcc1xoqa5prv9aw0w6eacawv6vl
+        m: []
+        python_version: 3.9.18
+        t:
+            "1":
+                - 1
+                - 41
+                - 49
+                - 54
+                - 63
+            "2":
+                - 1
+                - 41
+                - 49
+                - 54
+                - 63
+            "3":
+                - 2
+                - 13
+                - 16
+            "4": 3.9.18
+            "5": 0.21.1
+            "12": 0.21.1
+            "13": linux-x86_64
+batch_size:
+    value: 8
+input_sequence_length:
+    value: 36
+model_name:
+    value: nowcastnet
+num_workers:
+    value: 16
+output_sequence_length:
+    value: 36
+train_val_dates_range:
+    value:
+        - 2019-01-01T00:00:00
+        - 2019-12-31T23:59:59
+transform:
+    value: null

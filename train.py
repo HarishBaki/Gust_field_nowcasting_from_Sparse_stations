@@ -189,8 +189,8 @@ if __name__ == "__main__":
     parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     parser.add_argument('--loss_name', type=str, default='MaskedCombinedMAEQuantileLoss', help='Loss function name')
     parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
-    parser.add_argument('--input_window_size', type=int, default=6, help='Input window size (number of timesteps)')
-    parser.add_argument('--output_window_size', type=int, default=3, help='Output window size (number of timesteps)')
+    parser.add_argument('--input_sequence_length', type=int, default=6, help='Input window size (number of timesteps)')
+    parser.add_argument('--output_sequence_length', type=int, default=3, help='Output window size (number of timesteps)')
     parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
     parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
     args, unknown = parser.parse_known_args()
@@ -207,8 +207,8 @@ if __name__ == "__main__":
     num_epochs = args.num_epochs
     loss_name = args.loss_name
     resume = args.resume
-    input_window_size = args.input_window_size
-    output_window_size = args.output_window_size
+    input_sequence_length = args.input_sequence_length
+    output_sequence_length = args.output_sequence_length
     step_size = args.step_size
     forecast_offset = args.forecast_offset
 
@@ -216,7 +216,7 @@ if __name__ == "__main__":
     checkpoint_dir = f"{checkpoint_dir}/{loss_name}"
     checkpoint_dir = f"{checkpoint_dir}/{transform}"
     checkpoint_dir = f"{checkpoint_dir}/{activation_layer}-{weights_seed}"
-    checkpoint_dir =  f"{checkpoint_dir}/in_window-{input_window_size}_out_window-{output_window_size}-step-{step_size}_offset-{forecast_offset}"
+    checkpoint_dir =  f"{checkpoint_dir}/in_window-{input_sequence_length}_out_window-{output_sequence_length}-step-{step_size}_offset-{forecast_offset}"
     os.makedirs(checkpoint_dir, exist_ok=True)
     
     # %%
@@ -276,8 +276,8 @@ if __name__ == "__main__":
         zarr_store,
         variable,
         train_val_dates_range,
-        input_window_size,
-        output_window_size,
+        input_sequence_length,
+        output_sequence_length,
         freq,
         missing_times=None,
         mode=mode,
@@ -304,8 +304,8 @@ if __name__ == "__main__":
         zarr_store,
         variable,
         train_val_dates_range,
-        input_window_size,
-        output_window_size,
+        input_sequence_length,
+        output_sequence_length,
         freq,
         missing_times=None,
         mode=mode,
@@ -333,8 +333,8 @@ if __name__ == "__main__":
     # %%
     # === Set up device, model, loss, optimizer ===
     input_resolution = (orography.shape[0], orography.shape[1])
-    in_channels = input_window_size
-    out_channels = output_window_size
+    in_channels = input_sequence_length
+    out_channels = output_sequence_length
 
     if activation_layer == 'gelu':
         act_layer = nn.GELU
@@ -431,8 +431,8 @@ if __name__ == "__main__":
                 "num_workers": num_workers,
                 "weights_seed": weights_seed,
                 "loss_name": loss_name,
-                "input_window_size": input_window_size,
-                "output_window_size": output_window_size,
+                "input_sequence_length": input_sequence_length,
+                "output_sequence_length": output_sequence_length,
                 "train_val_dates_range": train_val_dates_range,
                 "transform": transform,
             },

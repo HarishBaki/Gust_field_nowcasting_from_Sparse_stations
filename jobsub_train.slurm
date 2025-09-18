@@ -4,9 +4,9 @@
 #SBATCH --output=slurmout/ddp_train-%j.out
 #SBATCH --error=slurmout/ddp_train-%j.err
 #SBATCH --time=07-00:00:00
-#SBATCH --mem=640gb
+##SBATCH --mem=640gb
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=2
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --exclude=dgx02
@@ -29,20 +29,21 @@ export MASTER_PORT=$((20000 + RANDOM % 20000))
 # ===============================
 variable=${variable:-'i10fg'}
 checkpoint_dir=${checkpoint_dir:-'checkpoints'}
-model_name=${model_name:-'predrnn_v2'}
+model_name=${model_name:-'nowcastnet'}
 activation_layer=${activation_layer:-'gelu'}
-transform=${transform:-'minmax'}
+transform=${transform:-'none'}
 batch_size=${batch_size:-12}
 num_workers=${num_workers:-16}
 weights_seed=${weights_seed:-42}
 num_epochs=${num_epochs:-200}
 loss_name=${loss_name:-'MaskedCharbonnierLoss'}
 resume=${resume:-'false'}
-input_window_size=${input_window_size:-36}
-output_window_size=${output_window_size:-36}
+input_sequence_length=${input_sequence_length:-36}
+output_sequence_length=${output_sequence_length:-36}
 step_size=${step_size:-1}
 forecast_offset=${forecast_offset:-0}
 is_training=${is_training:-1}
+train_mode=${train_mode:-0} # 0 for evolution network, 1 for nowcastnet network
 
 # ===============================
 # Echo all config values
@@ -61,11 +62,12 @@ echo "Weights Seed:             $weights_seed"
 echo "Num Epochs:               $num_epochs"
 echo "Loss Function:            $loss_name"
 echo "Resume from Checkpoint:   $resume"
-echo "Input Window Size:        $input_window_size"
-echo "Output Window Size:       $output_window_size"
+echo "Input Window Size:        $input_sequence_length"
+echo "Output Window Size:       $output_sequence_length"
 echo "Step Size:                $step_size"
 echo "Forecast Offset:          $forecast_offset"
 echo "Is Training:              $is_training"
+echo "Train Mode:               $train_mode"
 echo "======================================"
 
 export PYTHONNOUSERSITE=1   # make Python use the system site-packages, not from local user
@@ -78,7 +80,7 @@ export PYTHONPATH=/tmp/python/local/lib/python3.12/site-packages:/tmp/python/loc
 # ===============================
 # Run the training script
 # ===============================
-torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredRNN_V2.py \
+torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_nowcastnet.py \
   --variable "$variable" \
   --checkpoint_dir "$checkpoint_dir" \
   --model_name "$model_name" \
@@ -89,9 +91,10 @@ torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_PredR
   --weights_seed "$weights_seed" \
   --num_epochs "$num_epochs" \
   --loss_name "$loss_name" \
-  --input_window_size "$input_window_size" \
-  --output_window_size "$output_window_size" \
+  --input_sequence_length "$input_sequence_length" \
+  --output_sequence_length "$output_sequence_length" \
   --step_size "$step_size" \
   --forecast_offset "$forecast_offset" \
   --is_training "$is_training" \
+  --train_mode "$train_mode" \
   $( [ "$resume" = "true" ] && echo "--resume" )

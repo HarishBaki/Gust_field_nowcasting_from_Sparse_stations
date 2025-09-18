@@ -35,7 +35,7 @@ zarr_store=${zarr_store:-'data/NYSM.zarr'}
 start_date=${start_date:-'2023-01-01T00:00:00'}
 end_date=${end_date:-'2023-01-31T23:59:59'}
 freq=${freq:-'5min'}
-output_window_size=${output_window_size:-72}
+output_sequence_length=${output_sequence_length:-72}
 batch_size=${batch_size:-32}
 num_workers=${num_workers:-16}
 
@@ -51,7 +51,7 @@ echo "Zarr Store:               $zarr_store"
 echo "Start Date:               $start_date"
 echo "End Date:                 $end_date"
 echo "Frequency:                $freq"
-echo "Output Window Size:       $output_window_size"
+echo "Output Window Size:       $output_sequence_length"
 echo "Batch Size:               $batch_size"
 echo "Num Workers:              $num_workers"
 echo "======================================"
@@ -71,6 +71,6 @@ torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT Persistence
     --start_date "$start_date" \
     --end_date "$end_date" \
     --freq "$freq" \
-    --output_window_size $output_window_size \
+    --output_sequence_length $output_sequence_length \
     --batch_size $batch_size \
     --num_workers $num_workers

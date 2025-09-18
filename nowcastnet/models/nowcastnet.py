@@ -11,38 +11,38 @@ class Net(nn.Module):
     def __init__(self, configs):
         super(Net, self).__init__()
         self.configs = configs
-        self.pred_length = self.configs.total_length - self.configs.input_length
+        self.output_sequence_length = self.configs.total_sequence_length - self.configs.input_sequence_length
 
-        self.evo_net = Evolution_Network(self.configs.input_length, self.pred_length, base_c=32)
-        self.gen_enc = Generative_Encoder(self.configs.total_length, base_c=self.configs.ngf)
+        self.evo_net = Evolution_Network(self.configs.input_sequence_length, self.output_sequence_length, base_c=32)
+        self.gen_enc = Generative_Encoder(self.configs.total_sequence_length, base_c=self.configs.ngf)
         self.gen_dec = Generative_Decoder(self.configs)
         self.proj = Noise_Projector(self.configs.ngf, configs)
 
-        sample_tensor = torch.zeros(1, 1, self.configs.img_height, self.configs.img_width)
+        sample_tensor = torch.zeros(1, 1, self.configs.img_size[0], self.configs.img_size[1])
         self.grid = make_grid(sample_tensor)
 
     def forward(self, all_frames):
-        all_frames = all_frames[:, :, :, :, :1]
+        all_frames = all_frames[:, :, :, :, :1] # [B,T,H,W,1], last dime is just for channel
 
-        frames = all_frames.permute(0, 1, 4, 2, 3)
+        frames = all_frames.permute(0, 1, 4, 2, 3)  # [B,T,C,H,W]
         batch = frames.shape[0]
         height = frames.shape[3]
         width = frames.shape[4]
 
         # Input Frames
-        input_frames = frames[:, :self.configs.input_length]
-        input_frames = input_frames.reshape(batch, self.configs.input_length, height, width)
+        input_frames = frames[:, :self.configs.input_sequence_length]   # [B, input_seq_len, C, H, W]
+        input_frames = input_frames.reshape(batch, self.configs.input_sequence_length, height, width)   
 
         # Evolution Network
-        intensity, motion = self.evo_net(input_frames)
-        motion_ = motion.reshape(batch, self.pred_length, 2, height, width)
-        intensity_ = intensity.reshape(batch, self.pred_length, 1, height, width)
+        intensity, motion = self.evo_net(input_frames)  # [B, output_seq_len, H, W], [B, output_seq_len*2, H, W]
+        motion_ = motion.reshape(batch, self.output_sequence_length, 2, height, width)  # [B, output_seq_len, 2, H, W]
+        intensity_ = intensity.reshape(batch, self.output_sequence_length, 1, height, width)    # [B, output_seq_len, 1, H, W]
         series = []
-        last_frames = all_frames[:, (self.configs.input_length - 1):self.configs.input_length, :, :, 0]
+        last_frames = all_frames[:, (self.configs.input_sequence_length - 1):self.configs.input_sequence_length, :, :, 0]   # [B, 1, H, W]
         grid = self.grid.repeat(batch, 1, 1, 1)
-        for i in range(self.pred_length):
-            last_frames = warp(last_frames, motion_[:, i], grid.cuda(), mode="nearest", padding_mode="border")
-            last_frames = last_frames + intensity_[:, i]
+        for i in range(self.output_sequence_length):
+            last_frames = warp(last_frames, motion_[:, i], grid.cuda(), mode="nearest", padding_mode="border")  # [B, 1, H, W]
+            last_frames = last_frames + intensity_[:, i]    # [B, 1, H, W]
             series.append(last_frames)
         evo_result = torch.cat(series, dim=1)
 

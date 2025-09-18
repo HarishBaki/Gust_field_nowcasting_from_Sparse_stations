@@ -36,11 +36,11 @@ from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_mo
 
 """
 # Computing persistance error
-- My nowcast_dataset is designed to output input_tensor with a size of [B,input_window_size,H,W] and target_tensor with a size of [B,output_window_size,H,W]
+- My nowcast_dataset is designed to output input_tensor with a size of [B,input_sequence_length,H,W] and target_tensor with a size of [B,output_sequence_length,H,W]
 - For persistance error computation, we set the last instance of inputs as the target for next ouput_window_size. 
-- That means, get samples with input_window_size = 1, while varying the output_window_size over {1:72} for {5min:5hrs}.
-- Now, the target_tensor is infact the reference, while input_tensor[:,-1].unsqueeze(1).repeat(1, args.output_window_size, 1, 1)  # [B, output_window_size, H, W] becomes the persistance model output. 
-- Compute the loss for varying output_window_sizes 
+- That means, get samples with input_sequence_length = 1, while varying the output_sequence_length over {1:72} for {5min:5hrs}.
+- Now, the target_tensor is infact the reference, while input_tensor[:,-1].unsqueeze(1).repeat(1, args.output_sequence_length, 1, 1)  # [B, output_sequence_length, H, W] becomes the persistance model output. 
+- Compute the loss for varying output_sequence_lengths 
 """
 
 # %%
@@ -62,7 +62,7 @@ if __name__ == "__main__":
             "--start_date", "2023-01-01T00:00:00",
             "--end_date", "2023-01-31T23:59:59",
             "--freq", "5min",
-            "--output_window_size", "72",
+            "--output_sequence_length", "72",
             "--batch_size", "32",
             "--num_workers", "16",
         ]
@@ -82,7 +82,7 @@ if __name__ == "__main__":
                         help="End date for testing (e.g., '2023-01-31T23:59:59').")
     parser.add_argument("--freq", type=str, default="5min",
                         help="Data frequency (e.g., '5min').")
-    parser.add_argument("--output_window_size", type=int, default=72,
+    parser.add_argument("--output_sequence_length", type=int, default=72,
                         help="Number of time steps to predict.")
     parser.add_argument("--batch_size", type=int, default=32,
                         help="Batch size for DataLoader.")
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         'i10fg',
         test_dates_range,
         1,
-        args.output_window_size,
+        args.output_sequence_length,
         args.freq,
         missing_times=None,
         mode='test',
@@ -166,7 +166,7 @@ if __name__ == "__main__":
 
             # Persistence prediction: repeat last input
             persistence_pred = inputs[:, -1].unsqueeze(1).repeat(
-                1, args.output_window_size, 1, 1, 1
+                1, args.output_sequence_length, 1, 1, 1
             )
 
             # MAE
@@ -186,7 +186,7 @@ if __name__ == "__main__":
     # save to a text file
     target_path = f'{args.prediction_dir}/Persistence/{args.data_type}/freq_{args.freq}'
     os.makedirs(target_path, exist_ok=True)
-    with open(f'{target_path}/Horizon_{args.output_window_size}.txt', 'w') as f:
+    with open(f'{target_path}/Horizon_{args.output_sequence_length}.txt', 'w') as f:
         f.write(f'MAE: {mae:.4f}\n')
         f.write(f'MSE: {mse:.4f}\n')
         f.write(f'RMSE: {rmse:.4f}\n')

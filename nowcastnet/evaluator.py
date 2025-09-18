@@ -16,7 +16,7 @@ def test_pytorch_loader(model, test_input_handle, configs, itr):
 
         test_ims = test_ims['radar_frames'].numpy()
         img_gen = model.test(test_ims)
-        output_length = configs.total_length - configs.input_length
+        output_sequence_length = configs.total_sequence_length - configs.input_sequence_length
 
         def save_plots(field, labels, res_path, figsize=None,
                        vmin=0, vmax=10, cmap="viridis", npy=False, **imshow_args):
@@ -52,10 +52,10 @@ def test_pytorch_loader(model, test_input_handle, configs, itr):
                 test_ims_plot = test_ims[0][:-2]
                 img_gen_plot = img_gen[0][:-2]
             save_plots(test_ims_plot,
-                       labels=['gt{}'.format(i + 1) for i in range(configs.total_length)],
+                       labels=['gt{}'.format(i + 1) for i in range(configs.total_sequence_length)],
                        res_path=path, vmin=vis_info['vmin'], vmax=vis_info['vmax'])
             save_plots(img_gen_plot,
-                       labels=['pd{}'.format(i + 1) for i in range(9, configs.total_length)],
+                       labels=['pd{}'.format(i + 1) for i in range(9, configs.total_sequence_length)],
                        res_path=path, vmin=vis_info['vmin'], vmax=vis_info['vmax'])
 
     print('finished!')
