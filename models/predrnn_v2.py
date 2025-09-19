@@ -17,7 +17,6 @@ class RNN(nn.Module):
 
         height = configs.img_size[0] // configs.patch_size[0]
         width = configs.img_size[1] // configs.patch_size[1]
-        self.MSE_criterion = nn.MSELoss()
 
         for i in range(self.num_layers):
             in_channel = self.frame_channel if i == 0 else self.num_hidden[i - 1]
@@ -32,10 +31,8 @@ class RNN(nn.Module):
         adapter_num_hidden = self.num_hidden[0]
         self.adapter = nn.Conv2d(adapter_num_hidden, adapter_num_hidden, 1, stride=1, padding=0, bias=False)
 
-    def forward(self, frames_tensor, mask_true):
-        # [batch, length, height, width, channel] -> [batch, length, channel, height, width]
-        frames = frames_tensor.permute(0, 1, 4, 2, 3).contiguous()
-        mask_true = mask_true.permute(0, 1, 4, 2, 3).contiguous()
+    def forward(self, frames, mask_true):
+        # [batch, length, channel, height, width]
 
         batch = frames.shape[0]
         height = frames.shape[3]
@@ -92,7 +89,5 @@ class RNN(nn.Module):
 
         decouple_loss = torch.mean(torch.stack(decouple_loss, dim=0))
         decouple_loss = self.configs.decouple_beta * decouple_loss
-        # [length, batch, channel, height, width] -> [batch, length, height, width, channel]
-        next_frames = torch.stack(next_frames, dim=0).permute(1, 0, 3, 4, 2).contiguous()
-        #loss = self.MSE_criterion(next_frames, frames_tensor[:, 1:]) + self.configs.decouple_beta * decouple_loss
+        next_frames = torch.stack(next_frames, dim=1)
         return next_frames, decouple_loss
