@@ -434,7 +434,7 @@ if __name__ == "__main__":
         reverse_input=1,
         img_size=(256,288),
         img_channel=1,
-        num_hidden="128,128,128,128",
+        num_hidden=(128,128,128,128),
         filter_size=5,
         stride=1,
         patch_size=(8,8),
@@ -479,6 +479,7 @@ if __name__ == "__main__":
 
     # Back to a single name space ===
     args = SimpleNamespace(**merged)
+    args.num_layers = len(args.num_hidden)
 
     # Checkpoint dir
     args.checkpoint_dir = f"{args.checkpoint_dir}/{args.model_name}"
@@ -605,9 +606,7 @@ if __name__ == "__main__":
 
     # %%
     # === Set up device, model, loss, optimizer ===
-    num_hidden = [int(x) for x in args.num_hidden.split(',')]
-    num_layers = len(num_hidden)
-    model = predrnn_v2.RNN(num_layers,num_hidden,args).to(args.device)
+    model = predrnn_v2.RNN(args).to(args.device)
     if is_distributed():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 

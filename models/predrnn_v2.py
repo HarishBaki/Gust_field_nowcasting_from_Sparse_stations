@@ -1,5 +1,3 @@
-__author__ = 'yunbo'
-
 import torch
 import torch.nn as nn
 from models.layers.SpatioTemporalLSTMCell_v2 import SpatioTemporalLSTMCell
@@ -7,31 +5,31 @@ import torch.nn.functional as F
 
 
 class RNN(nn.Module):
-    def __init__(self, num_layers, num_hidden, configs):
+    def __init__(self, configs):
         super(RNN, self).__init__()
 
         self.configs = configs
 
         self.frame_channel = configs.patch_size[0] * configs.patch_size[1] * configs.img_channel
-        self.num_layers = num_layers
-        self.num_hidden = num_hidden
+        self.num_layers = configs.num_layers
+        self.num_hidden = configs.num_hidden
         cell_list = []
 
         height = configs.img_size[0] // configs.patch_size[0]
         width = configs.img_size[1] // configs.patch_size[1]
         self.MSE_criterion = nn.MSELoss()
 
-        for i in range(num_layers):
-            in_channel = self.frame_channel if i == 0 else num_hidden[i - 1]
+        for i in range(self.num_layers):
+            in_channel = self.frame_channel if i == 0 else self.num_hidden[i - 1]
             cell_list.append(
-                SpatioTemporalLSTMCell(in_channel, num_hidden[i], height, width, configs.filter_size,
+                SpatioTemporalLSTMCell(in_channel, self.num_hidden[i], height, width, configs.filter_size,
                                        configs.stride, configs.layer_norm)
             )
         self.cell_list = nn.ModuleList(cell_list)
-        self.conv_last = nn.Conv2d(num_hidden[num_layers - 1], self.frame_channel, kernel_size=1, stride=1, padding=0,
+        self.conv_last = nn.Conv2d(self.num_hidden[self.num_layers - 1], self.frame_channel, kernel_size=1, stride=1, padding=0,
                                    bias=False)
         # shared adapter
-        adapter_num_hidden = num_hidden[0]
+        adapter_num_hidden = self.num_hidden[0]
         self.adapter = nn.Conv2d(adapter_num_hidden, adapter_num_hidden, 1, stride=1, padding=0, bias=False)
 
     def forward(self, frames_tensor, mask_true):
