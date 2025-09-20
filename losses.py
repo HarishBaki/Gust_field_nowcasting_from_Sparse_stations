@@ -10,9 +10,9 @@ class MaskedErrorLoss(nn.Module):
       - [B, C, H, W]
       - [B, T, H, W, C]
     """
-    def __init__(self, mask_2d):
+    def __init__(self, mask_tensor_extended):
         super().__init__()
-        self.register_buffer("mask_2d", mask_2d.float())
+        self.register_buffer("mask_tensor_extended", mask_tensor_extended.float())
 
     def forward(self, output, target, mode='mae',reduction='mean'):
         """
@@ -21,16 +21,10 @@ class MaskedErrorLoss(nn.Module):
         """
         if output.shape != target.shape:
             raise ValueError(f"Shape mismatch: {output.shape} vs {target.shape}")
-
-        ndim = output.ndim
-        if ndim == 4:
-            B, C, H, W = output.shape
-            mask = self.mask_2d[None, None, :, :].expand(B, C, H, W)
-        elif ndim == 5:
-            B, T, H, W, C = output.shape
-            mask = self.mask_2d[None, None, :, :, None].expand(B, T, H, W, C)
-        else:
-            raise ValueError(f"Unsupported ndim={ndim}")
+        
+        mask = self.mask_tensor_extended
+        if mask.shape != output.shape:
+            mask = mask.expand_as(output)
 
         diff = output - target
         if mode in ['mse', 'rmse']:
@@ -53,78 +47,35 @@ class MaskedErrorLoss(nn.Module):
             return err_sum, valid_counts
         else:
             raise ValueError(f"Unsupported reduction={reduction}")
-        
-    
-class MaskedTVLoss(nn.Module):
-    """
-    Total Variation Loss, computed **only** at valid locations (inside NY, not at stations).
-    """
-    def __init__(self, mask_2d, tv_loss_weight=1.0, beta=0.5):
-        """
-        mask_2d: torch.Tensor [H, W] (1=inside NY, 0=outside NY)
-        tv_loss_weight: scaling factor for TV loss
-        beta: degree of smoothness penalty
-        """
-        super().__init__()
-        self.register_buffer("mask_2d", mask_2d.float())    # persists on .cuda()/.cpu(), such that the mask_2d devie is used.
-        self.tv_loss_weight = tv_loss_weight
-        self.beta = beta
-
-    def forward(self, x):
-        """
-        x: [B, 1, H, W] (predicted field)
-        station_mask: [B, 1, H, W]  (1=station, 0=else)
-        """
-        B, C, H, W = x.shape
-        mask = self.mask_2d.unsqueeze(0).unsqueeze(0)       # [1, 1, H, W]
-        valid_mask = mask.expand(B, C, H, W).float()   # [B, 1, H, W].
-
-        # Horizontal and vertical TV only for valid locations
-        dh = (x[:, :, :, 1:] - x[:, :, :, :-1]).abs() ** self.beta  # [B, 1, H, W-1]
-        dw = (x[:, :, 1:, :] - x[:, :, :-1, :]).abs() ** self.beta  # [B, 1, H-1, W]
-
-        # valid_mask for dh (last col missing), dw (last row missing)
-        valid_mask_h = valid_mask[:, :, :, 1:] * valid_mask[:, :, :, :-1]
-        valid_mask_w = valid_mask[:, :, 1:, :] * valid_mask[:, :, :-1, :]
-
-        tv = ((dh * valid_mask_h).sum() + (dw * valid_mask_w).sum()) / (
-            valid_mask_h.sum() + valid_mask_w.sum()
-        ).clamp(min=1.0)
-        return self.tv_loss_weight * tv
 
 class MaskedCharbonnierLoss(nn.Module):
     """
     Charbonnier Loss, only over valid (masked) locations.
     Works for inputs of shape [B,C,H,W] or [B,T,H,W,C].
     """
-    def __init__(self, mask_2d, eps=1e-3):
+    def __init__(self, mask_tensor_extended, eps=1e-3):
         """
-        mask_2d: torch.Tensor [H, W] (1=inside NY, 0=outside NY)
+        mask_tensor_extended: torch.Tensor [B, C, H, W] (1=inside NY, 0=outside NY)
         eps: Charbonnier smoothing factor
         """
         super().__init__()
-        self.register_buffer("mask_2d", mask_2d.float())   # persists on .cuda()/.cpu(), such that the mask_2d devie is used.
+        self.register_buffer("mask_tensor_extended", mask_tensor_extended.float())   # persists on .cuda()/.cpu(), such that the mask_2d devie is used.
         self.eps = eps
 
-    def forward(self, x, y):
+    def forward(self, output, target):
         """
-        x: [B, 1, H, W] (prediction)
-        y: [B, 1, H, W] (target)
+        output: [B, 1, H, W] (prediction)
+        target: [B, 1, H, W] (target)
         station_mask: [B, 1, H, W]  (1=station, 0=else)
         """
-        ndim = x.ndim
-        if ndim == 4:
-            # [B,C,H,W]
-            B, C, H, W = x.shape
-            mask = self.mask_2d[None, None, :, :].expand(B, C, H, W)
-        elif ndim == 5:
-            # [B,T,H,W,C] (channels last)
-            B, T, H, W, C = x.shape
-            mask = self.mask_2d[None, None, :, :, None].expand(B, T, H, W, C)
-        else:
-            raise ValueError(f"Unsupported ndim={ndim}. Expected 4 or 5.")
+        if output.shape != target.shape:
+            raise ValueError(f"Shape mismatch: {output.shape} vs {target.shape}")
+        
+        mask = self.mask_tensor_extended
+        if mask.shape != output.shape:
+            mask = mask.expand_as(output)
 
-        diff = x - y
+        diff = output - target
         charbonnier = torch.sqrt(diff ** 2 + self.eps ** 2)
         masked_charb = charbonnier * mask
         loss = masked_charb.sum() / mask.sum().clamp(min=1.0)
