@@ -70,7 +70,7 @@ def strip_ddp_prefix(state_dict):
     """Remove 'module.' prefix if loading DDP model into non-DDP."""
     return {k.replace("module.", ""): v for k, v in state_dict.items()}
 
-def restore_model_checkpoint(model, optimizer, scheduler, path, device="cuda"):
+def restore_model_checkpoint(model, optimizer=None, scheduler=None, path=None, device="cuda"):
     checkpoint = torch.load(path, map_location=device)
     state_dict = checkpoint["model_state_dict"]
     try:
@@ -80,9 +80,12 @@ def restore_model_checkpoint(model, optimizer, scheduler, path, device="cuda"):
         print("Warning: DDP prefix found, attempting to strip 'module.' from keys...")
         state_dict = strip_ddp_prefix(state_dict)
         model.load_state_dict(state_dict)
-    
-    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-    scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    # Only load optimizer if provided
+    if optimizer is not None and "optimizer_state_dict" in checkpoint:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    # Only load scheduler if provided
+    if scheduler is not None and "scheduler_state_dict" in checkpoint:
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
     start_epoch = checkpoint["epoch"] + 1
     print(f"Restored checkpoint from: {path} (epoch {checkpoint['epoch']})")
     return model, optimizer, scheduler, start_epoch
@@ -105,38 +108,49 @@ def init_zarr_store(zarr_store, dates,variable):
 # === Reshaping functions ===
 def reshape_patch(img_tensor: torch.Tensor, patch_size):
     """
-    img_tensor: [B, T, H, W, C]
+    img_tensor: [B, T, C, H, W]
     patch_size: (ph, pw)
-    Returns: [B, T, H/ph, W/pw, ph*pw*C]
+    Returns: [B, T, C*ph*pw, H/ph, W/pw]
     """
     assert img_tensor.ndim == 5
-    B, T, H, W, C = img_tensor.shape
+    B, T, C, H, W = img_tensor.shape
     ph, pw = patch_size
     assert H % ph == 0 and W % pw == 0, "H,W must be divisible by patch_size"
 
-    # [B,T,H/ph,ph,W/pw,pw,C]
-    x = img_tensor.view(B, T, H // ph, ph, W // pw, pw, C)
-    # [B,T,H/ph,W/pw,ph,pw,C]
-    x = x.permute(0, 1, 2, 4, 3, 5, 6).contiguous()
-    # [B,T,H/ph,W/pw,ph*pw*C]
-    patch_tensor = x.view(B, T, H // ph, W // pw, ph * pw * C)
+    # [B,T,C,H/ph,ph,W/pw,pw]
+    x = img_tensor.view(B, T, C, H // ph, ph, W // pw, pw)
+    # [B,T,C,H/ph,W/pw,ph,pw]
+    x = x.permute(0, 1, 2, 4, 6, 3, 5).contiguous()
+    # [B,T,C,H/ph,W/pw,ph*pw]
+    patch_tensor = x.view(B, T, C*ph * pw, H // ph, W // pw)
     return patch_tensor
 
 def reshape_patch_back(patch_tensor: torch.Tensor, patch_size):
     """
-    patch_tensor: [B, T, H/ph, W/pw, ph*pw*C]
+    patch_tensor: [B, T, C*ph*pw, H/ph, W/pw]
     patch_size: (ph, pw)
-    Returns: [B, T, H, W, C]
+    Returns: [B, T, C, H, W]
     """
     assert patch_tensor.ndim == 5
-    B, T, Hh, Ww, CC = patch_tensor.shape
+    B, T, CC, Hh, Ww = patch_tensor.shape
     ph, pw = patch_size
     C = CC // (ph * pw)
 
-    # [B,T,Hh,Ww,ph,pw,C]
-    x = patch_tensor.view(B, T, Hh, Ww, ph, pw, C)
-    # [B,T,Hh,ph,Ww,pw,C]
-    x = x.permute(0, 1, 2, 4, 3, 5, 6).contiguous()
-    # [B,T,Hh*ph,Ww*pw,C]
-    img_tensor = x.view(B, T, Hh * ph, Ww * pw, C)
+    # [B,T,C,ph,pw,Hh,Ww]
+    x = patch_tensor.view(B, T, C, ph, pw, Hh, Ww)
+    # [B,T,C,Hh,ph,Ww,pw]
+    x = x.permute(0, 1, 2, 5, 3, 6,4).contiguous()
+    # [B,T,C,Hh*ph,Ww*pw]
+    img_tensor = x.view(B, T, C, Hh * ph, Ww * pw)
     return img_tensor
+
+def wandb_safe_config(args):
+    safe = {}
+    for k, v in vars(args).items():
+        if isinstance(v, (str, int, float, bool, list, tuple, dict)) or v is None:
+            safe[k] = v
+        elif isinstance(v, torch.device):
+            safe[k] = str(v)   # e.g. "cuda:0"
+        else:
+            safe[k] = str(v)   # fallback: store repr
+    return safe
