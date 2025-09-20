@@ -3,74 +3,62 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from argparse import ArgumentParser
+from types import SimpleNamespace
 
 # ------------------------------
 # Core Model (Pure PyTorch)
 # ------------------------------
 class CGsNet(nn.Module):
-    def __init__(
-        self,
-        height,
-        width,
-        input_length,
-        target_length,
-        downscale_factor=4,
-        num_channels_in=1,
-        num_channels_out=1,
-        cnn_hidden_size=64,
-        rnn_input_dim=64,
-        phycell_hidden_dims=[64],
-        kernel_size_phycell=3,
-        convlstm_hidden_dims=[64],
-        kernel_size_convlstm=3,
-    ):
+    def __init__(self, configs):
         super().__init__()
+        self.configs = configs
 
-        # Store only what we actually use inside the modules/forward
-        self.input_length = input_length
-        self.target_length = target_length
-        self.convlstm_hidden_dims = convlstm_hidden_dims
-        self.phycell_hidden_dims = phycell_hidden_dims
-        self.rnn_input_dim = rnn_input_dim
+        # store
+        self.input_sequence_length = configs.input_sequence_length
+        self.output_sequence_length = configs.output_sequence_length
+        self.convlstm_hidden_dims = configs.convlstm_hidden_dims
+        self.phycell_hidden_dims = configs.phycell_hidden_dims
+        self.rnn_input_dim = configs.rnn_input_dim
 
-        assert height % downscale_factor == 0, "downscale_height should divide height"
-        assert width % downscale_factor == 0, "downscale_width should divide width"
+        assert configs.height % configs.downscale_factor == 0, "downscale_height must divide height"
+        assert configs.width % configs.downscale_factor == 0, "downscale_width must divide width"
 
-        self.num_channels_in = num_channels_in
-        self.num_channels_out = num_channels_out
-        self.rnn_cell_height = height // downscale_factor
-        self.rnn_cell_width = width // downscale_factor
+        self.num_channels_in = configs.num_channels_in
+        self.num_channels_out = configs.num_channels_out
+        self.rnn_cell_height = configs.height // configs.downscale_factor
+        self.rnn_cell_width = configs.width // configs.downscale_factor
 
+        # encoder / decoder
         self.encoder = EncoderRNN(
             self.num_channels_in,
-            cnn_hidden_size,
+            configs.cnn_hidden_size,
             self.num_channels_out,
             self.rnn_cell_height,
             self.rnn_cell_width,
-            rnn_input_dim,
-            phycell_hidden_dims,
-            kernel_size_phycell,
-            convlstm_hidden_dims,
-            kernel_size_convlstm,
-            downscale_factor,
+            self.rnn_input_dim,
+            self.phycell_hidden_dims,
+            configs.kernel_size_phycell,
+            self.convlstm_hidden_dims,
+            configs.kernel_size_convlstm,
+            configs.downscale_factor,
         )
         self.decoder = DecoderRNN_ATT(
             self.num_channels_in,
-            cnn_hidden_size,
+            configs.cnn_hidden_size,
             self.num_channels_out,
             self.rnn_cell_height,
             self.rnn_cell_width,
-            rnn_input_dim,
-            phycell_hidden_dims,
-            kernel_size_phycell,
-            convlstm_hidden_dims,
-            kernel_size_convlstm,
-            downscale_factor,
-            input_length=input_length,
+            self.rnn_input_dim,
+            self.phycell_hidden_dims,
+            configs.kernel_size_phycell,
+            self.convlstm_hidden_dims,
+            configs.kernel_size_convlstm,
+            configs.downscale_factor,
+            input_sequence_length=self.input_sequence_length,
         )
 
-        self.layers_phys = len(phycell_hidden_dims)
-        self.layers_convlstm = len(convlstm_hidden_dims)
+        self.layers_phys = len(self.phycell_hidden_dims)
+        self.layers_convlstm = len(self.convlstm_hidden_dims)
 
     def forward(self, input_tensor, target_tensor=None, use_teacher_forcing=False):
         """
@@ -102,7 +90,7 @@ class CGsNet(nn.Module):
             )
 
         # Encoder pass over all but last input frame
-        for ei in range(self.input_length - 1):
+        for ei in range(self.input_sequence_length - 1):
             h_t, c_t, phys_h_t, encoder_phys, encoder_conv, output_image, output_att = self.encoder(
                 input_tensor[:, ei],
                 first_timestep=(ei == 0),
@@ -126,7 +114,7 @@ class CGsNet(nn.Module):
         decoder_frames.append(output_image[:, : self.num_channels_out])
 
         # Decoder steps
-        for di in range(self.target_length - 1):
+        for di in range(self.output_sequence_length - 1):
             if use_teacher_forcing and target_tensor is not None:
                 decoder_input = target_tensor[:, di]
             else:
@@ -145,7 +133,7 @@ class CGsNet(nn.Module):
         encoder_frames = torch.stack(encoder_frames, dim=1) if len(encoder_frames) > 0 else None
         decoder_frames = torch.stack(decoder_frames, dim=1)
 
-        return encoder_frames, decoder_frames
+        return decoder_frames   # At this stage, we are only outputting future predictions, not the reconstructions of the input sequence
 
 
 # ------------------------------
@@ -164,7 +152,7 @@ class EncoderRNN(nn.Module):
         kernel_size_phycell,
         convlstm_hidden_dims,
         kernel_size_convlstm,
-        downscale=4,
+        downscale,
     ):
         super().__init__()
         if downscale == 4:
@@ -237,8 +225,8 @@ class DecoderRNN_ATT(nn.Module):
         kernel_size_phycell,
         convlstm_hidden_dims,
         kernel_size_convlstm,
-        downscale=4,
-        input_length=6,
+        downscale,
+        input_sequence_length,
     ):
         super().__init__()
         if downscale == 4:
@@ -262,7 +250,7 @@ class DecoderRNN_ATT(nn.Module):
         self.decoder_Dr = decoder_specific(nchannels_in=cnn_hidden_size, nchannels_out=cnn_hidden_size)
 
         # Attention over encoder sequence
-        self.att = nn.Conv2d(in_channels=rnn_input_dim, out_channels=input_length, kernel_size=1, stride=1, padding=0)
+        self.att = nn.Conv2d(in_channels=rnn_input_dim, out_channels=input_sequence_length, kernel_size=1, stride=1, padding=0)
         self.att_combine = nn.Conv2d(
             in_channels=2 * rnn_input_dim, out_channels=rnn_input_dim, kernel_size=1, stride=1, padding=0
         )
@@ -632,48 +620,38 @@ class decoder_specific(nn.Module):
 # %%
 if __name__ == "__main__":
     # %%
-    height=64
-    width=64
-    input_length=36
-    target_length=36
-    downscale_factor=4
-    num_channels_in=1
-    num_channels_out=1
-    cnn_hidden_size=64
-    rnn_input_dim=64
-    phycell_hidden_dims=[64]
-    kernel_size_phycell=3
-    convlstm_hidden_dims=[64]
-    kernel_size_convlstm=3
+# === Defaults ===
+    defaults = SimpleNamespace(
+        height=256,
+        width=288,
+        downscale_factor=4,
+        num_hidden=(128,128,128,128),
+        num_channels_in=1,
+        num_channels_out=1,
+        cnn_hidden_size=64,
+        rnn_input_dim=64,
+        phycell_hidden_dims=[64],
+        kernel_size_phycell=3,
+        convlstm_hidden_dims=[64],
+        kernel_size_convlstm=3,
+        input_sequence_length=36,
+        output_sequence_length=36
+    )
+    args = defaults
     # %%
     # Instantiate model
-    model = CGsNet(
-        height=height,
-        width=width,
-        input_length=input_length,
-        target_length=target_length,
-        downscale_factor=downscale_factor,
-        num_channels_in=num_channels_in,
-        num_channels_out=num_channels_out,
-        cnn_hidden_size=cnn_hidden_size,
-        rnn_input_dim=rnn_input_dim,
-        phycell_hidden_dims=phycell_hidden_dims,
-        kernel_size_phycell=kernel_size_phycell,
-        convlstm_hidden_dims=convlstm_hidden_dims,
-        kernel_size_convlstm=kernel_size_convlstm,
-    )
+    model = CGsNet(args)
 
     # %%
     # Quick sanity run
-    B, Tin = 2, input_length
-    C_in = num_channels_in
-    H, W = height, width
+    B, Tin = 2, args.input_sequence_length
+    C_in = args.num_channels_in
+    H, W = args.height, args.width
 
     x = torch.randn(B, Tin, C_in, H, W)
-    enc_frames, dec_frames = model(x, None, False)
+    dec_frames = model(x, None, False)
 
     print(
-        "encoder_frames:", None if enc_frames is None else tuple(enc_frames.shape),
-        "\ndecoder_frames:", tuple(dec_frames.shape),
+        "decoder_frames:", tuple(dec_frames.shape),
     )
 # %%
