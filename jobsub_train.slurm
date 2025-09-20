@@ -6,7 +6,7 @@
 #SBATCH --time=07-00:00:00
 ##SBATCH --mem=640gb
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=2
+#SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --exclude=dgx02
@@ -29,12 +29,10 @@ export MASTER_PORT=$((20000 + RANDOM % 20000))
 # ===============================
 variable=${variable:-'i10fg'}
 checkpoint_dir=${checkpoint_dir:-'checkpoints'}
-model_name=${model_name:-'nowcastnet'}
-activation_layer=${activation_layer:-'gelu'}
-transform=${transform:-'none'}
+model_name=${model_name:-'CGsNet'} # Options: 'nowcastnet', 'predrnn_v2', 'CGsNet'
+transform=${transform:-'minmax'}
 batch_size=${batch_size:-12}
 num_workers=${num_workers:-16}
-weights_seed=${weights_seed:-42}
 num_epochs=${num_epochs:-200}
 loss_name=${loss_name:-'MaskedCharbonnierLoss'}
 resume=${resume:-'false'}
@@ -54,11 +52,9 @@ echo "--------------------------------------"
 echo "Variable:                 $variable"
 echo "Checkpoint Dir:           $checkpoint_dir"
 echo "Model:                    $model_name"
-echo "Activation Layer:         $activation_layer"
 echo "Transform:                $transform"
 echo "Batch Size:               $batch_size"
 echo "Num Workers:              $num_workers"
-echo "Weights Seed:             $weights_seed"
 echo "Num Epochs:               $num_epochs"
 echo "Loss Function:            $loss_name"
 echo "Resume from Checkpoint:   $resume"
@@ -80,15 +76,25 @@ export PYTHONPATH=/tmp/python/local/lib/python3.12/site-packages:/tmp/python/loc
 # ===============================
 # Run the training script
 # ===============================
-torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT train_nowcastnet.py \
+
+if [ "$model_name" = "nowcastnet" ]; then
+  train_file="train_nowcastnet.py"
+elif [ "$model_name" = "predrnn_v2" ]; then
+  train_file="train_PredRNN_V2.py"
+elif [ "$model_name" = "CGsNet" ]; then
+  train_file="train_CGsNet.py"
+else
+  echo "Error: Unsupported model name '$model_name'. Supported models are 'nowcastnet', 'predrnn_v2', and 'CGsNet'."
+  exit 1
+fi
+
+torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT $train_file \
   --variable "$variable" \
   --checkpoint_dir "$checkpoint_dir" \
   --model_name "$model_name" \
-  --activation_layer "$activation_layer" \
   --transform "$transform" \
   --batch_size "$batch_size" \
   --num_workers "$num_workers" \
-  --weights_seed "$weights_seed" \
   --num_epochs "$num_epochs" \
   --loss_name "$loss_name" \
   --input_sequence_length "$input_sequence_length" \
