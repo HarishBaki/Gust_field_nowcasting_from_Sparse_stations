@@ -32,15 +32,16 @@ from models.UNet import UNet
 from models.SwinT2_UNet import SwinT2UNet
 from models.util import initialize_weights_xavier,initialize_weights_he
 from models import predrnn_v2
+from models.CGsNet import CGsNet
 
-from losses import MaskedErrorLoss, MaskedTVLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
+from losses import MaskedErrorLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
+from types import SimpleNamespace
 
-from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store, reshape_patch, reshape_patch_back
+from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store, reshape_patch, reshape_patch_back, wandb_safe_config
 
 # === PredRNN ===#
 predrnn_path = Path.cwd() / "external" / "predrnn"
 sys.path.insert(0, str(predrnn_path))
-from types import SimpleNamespace
 
 # %%
 # === Defining schedule sampling functions ===
@@ -48,7 +49,7 @@ from types import SimpleNamespace
 def reserve_schedule_sampling_exp(itr, args, batch_size=None, dtype=torch.float32):
     """
     Reverse schedule sampling flags in GRID space.
-    Returns: real_input_flag of shape [B, T-2, H, W, C] (float32 on device)
+    Returns: real_input_flag of shape [B, T-2, C, H, W] (float32 on device)
     """
     B   = batch_size if batch_size is not None else args.batch_size
     Tin = args.input_sequence_length
@@ -77,9 +78,9 @@ def reserve_schedule_sampling_exp(itr, args, batch_size=None, dtype=torch.float3
     r_true_token = (torch.rand(B, Tin - 1, device=device, generator=gen) < r_eta)
     true_token   = (torch.rand(B, T - Tin - 1, device=device, generator=gen) < eta)
 
-    # build flags list per-sample/time (keep vectorized over HWC)
-    ones  = torch.ones (H, W, C, device=device, dtype=dtype)
-    zeros = torch.zeros(H, W, C, device=device, dtype=dtype)
+    # build flags list per-sample/time (keep vectorized over CHW)
+    ones  = torch.ones (C, H, W, device=device, dtype=dtype)
+    zeros = torch.zeros(C, H, W, device=device, dtype=dtype)
 
     # length = T-2
     flags = []
@@ -92,8 +93,8 @@ def reserve_schedule_sampling_exp(itr, args, batch_size=None, dtype=torch.float3
             else:
                 jj = j - (Tin - 1)
                 row.append(ones if true_token[i, jj] else zeros)
-        flags.append(torch.stack(row, dim=0))   # [T-2,H,W,C]
-    real_input_flag = torch.stack(flags, dim=0) # [B,T-2,H,W,C]
+        flags.append(torch.stack(row, dim=0))   # [T-2,C,H,W]
+    real_input_flag = torch.stack(flags, dim=0) # [B,T-2,C,H,W]
     return real_input_flag  # dtype float32
 
 
@@ -101,7 +102,7 @@ def reserve_schedule_sampling_exp(itr, args, batch_size=None, dtype=torch.float3
 def schedule_sampling(eta, itr, args, batch_size=None, dtype=torch.float32):
     """
     Forward schedule sampling flags in GRID space.
-    Returns: (eta_new, real_input_flag) with shape [B, T-Tin-1, H, W, C]
+    Returns: (eta_new, real_input_flag) with shape [B, T-Tin-1, C, H, W]
     """
     B   = batch_size if batch_size is not None else args.batch_size
     Tin = args.input_sequence_length
@@ -112,7 +113,7 @@ def schedule_sampling(eta, itr, args, batch_size=None, dtype=torch.float32):
 
     if not getattr(args, "scheduled_sampling", True):
         # zeros like original
-        rif = torch.zeros(B, T - Tin - 1, H, W, C, device=device, dtype=dtype)
+        rif = torch.zeros(B, T - Tin - 1, C, H, W, device=device, dtype=dtype)
         return 0.0, rif
 
     # update eta
@@ -125,14 +126,14 @@ def schedule_sampling(eta, itr, args, batch_size=None, dtype=torch.float32):
     gen = None
     true_token = (torch.rand(B, T - Tin - 1, device=device, generator=gen) < eta_new)
 
-    ones  = torch.ones (H, W, C, device=device, dtype=dtype)
-    zeros = torch.zeros(H, W, C, device=device, dtype=dtype)
+    ones  = torch.ones (C, H, W, device=device, dtype=dtype)
+    zeros = torch.zeros(C, H, W, device=device, dtype=dtype)
 
     flags = []
     for i in range(B):
         row = [ones if true_token[i, j] else zeros for j in range(T - Tin - 1)]
-        flags.append(torch.stack(row, dim=0))   # [T-Tin-1,H,W,C]
-    real_input_flag = torch.stack(flags, dim=0) # [B,T-Tin-1,H,W,C]
+        flags.append(torch.stack(row, dim=0))   # [T-Tin-1,C,H,W]
+    real_input_flag = torch.stack(flags, dim=0) # [B,T-Tin-1,C,H,W]
     return eta_new, real_input_flag
 
 @torch.no_grad()
@@ -149,14 +150,14 @@ def flags_eval(args, batch_size=None):
         L = T - 2  # reverse mode length
         # timeline index j=0..T-3 corresponds to decisions for times 1..T-2
         # set first Tin-1 to 1 (teacher forcing), rest 0
-        ones  = torch.ones (B, Tin-1, H, W, C, device=device, dtype=dtype)
-        zeros = torch.zeros(B, L-(Tin-1), H, W, C, device=device, dtype=dtype)
-        flags = torch.cat([ones, zeros], dim=1)  # [B,T-2,H,W,C]
+        ones  = torch.ones (B, Tin-1, C, H, W, device=device, dtype=dtype)
+        zeros = torch.zeros(B, L-(Tin-1), C, H, W, device=device, dtype=dtype)
+        flags = torch.cat([ones, zeros], dim=1)  # [B,T-2,C,H,W]
         eta   = None
         return eta, flags
     else:
         L = T - Tin - 1  # forward mode length
-        flags = torch.zeros(B, L, H, W, C, device=device, dtype=dtype)  # pure open-loop
+        flags = torch.zeros(B, L, C, H, W, device=device, dtype=dtype)  # pure open-loop
         eta   = None
         return eta, flags
 
@@ -170,9 +171,9 @@ def forward_step(frames_tensor, real_input_flag,
     Parameters
     ----------
     frames_tensor : torch.Tensor
-        Shape [B, Tin+Tout, H, W, 1]
+        Shape [B, Tin+Tout, C, H, W]
     real_input_flag : torch.Tensor
-        Schedule sampling mask, shape [B, Tin+Tout-2, H, W, 1]
+        Schedule sampling mask, shape [B, Tin+Tout-2, C, H, W]
     model : nn.Module
         PredRNN-V2 model
     criterion : callable
@@ -180,7 +181,7 @@ def forward_step(frames_tensor, real_input_flag,
     metric : callable
         Metric function
     mask_tensor_expanded : torch.Tensor
-        Mask of shape [1,1,H,W,1]
+        Mask of shape [1,1,1,H,W]
     args : Namespace
         Holds config (patch_size, input_sequence_length, etc.)
     input_transform : Transform, optional
@@ -252,7 +253,7 @@ def forward_step(frames_tensor, real_input_flag,
             return None  # or: raise ValueError("Nothing to return")
 
 def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, metric,
-               train_sampler, scheduler, early_stopping, mask_tensor,input_transform=None,target_transform=None,
+               train_sampler, scheduler, early_stopping, mask_tensor_expanded, input_transform=None,target_transform=None,
                args=None):
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
@@ -273,9 +274,6 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
     for epoch in range(start_epoch, args.num_epochs):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
-
-        # Mask tensor needs to be in same shape as frames_tensor
-        mask_tensor_expanded = mask_tensor[None, None, :, :, None].to(args.device)  # [1,1,H,W,1]
         
         # === Training ===
         model.train()
@@ -289,9 +287,9 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
 
             input_tensor, target_tensor,_,_ = batch
             frames_tensor = torch.cat((input_tensor, target_tensor), dim=1)  # [B, Tin+Tout, H, W]
-            frames_tensor = frames_tensor.unsqueeze(-1)     # [B, Tin+Tout, H, W, 1]
+            frames_tensor = frames_tensor.unsqueeze(2)     # [B, Tin+Tout, 1, H, W]
 
-            frames_tensor = frames_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, H, W, 1]
+            frames_tensor = frames_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, 1, H, W]
             Bcur = frames_tensor.size(0)
             if args.reverse_scheduled_sampling == 1:
                 real_input_flag = reserve_schedule_sampling_exp(itr,args,batch_size=Bcur)
@@ -337,9 +335,9 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             for batch in val_bar:
                 input_tensor, target_tensor,_,_ = batch
                 frames_tensor = torch.cat((input_tensor, target_tensor), dim=1)  # [B, Tin+Tout, H, W]
-                frames_tensor = frames_tensor.unsqueeze(-1)     # [B, Tin+Tout, H, W, 1]
+                frames_tensor = frames_tensor.unsqueeze(2)     # [B, Tin+Tout, 1, H, W]
 
-                frames_tensor = frames_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, H, W, 1]
+                frames_tensor = frames_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, 1, H, W]
                 Bcur = frames_tensor.size(0)
                 _, real_input_flag = flags_eval(args,batch_size=Bcur)
 
@@ -395,19 +393,18 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                 break
 
 @torch.no_grad()
-def run_inference(model, test_dataloader, mask_tensor, criterion, metric, args, input_transform=None):
+def run_inference(model, test_dataloader, mask_tensor_expanded, criterion, metric, args, input_transform=None):
     # load the best model Handle DDP 'module.' prefix
     best_ckpt_path = os.path.join(args.checkpoint_dir, "best_model.pt")
-    model, _, _, _ = restore_model_checkpoint(model, optimizer, scheduler, best_ckpt_path, args.device)
+    model, _, _, _ = restore_model_checkpoint(model, None, None, best_ckpt_path, args.device)
 
     model.eval()
-    mask_tensor_expanded = mask_tensor[None, None, :, :, None].to(args.device)
     total_loss, total_metric = 0.0, 0.0
     preds_all = []
 
     for batch in tqdm(test_dataloader, desc="[Test]"):
         input_tensor, target_tensor, _, _ = batch
-        frames_tensor = torch.cat((input_tensor, target_tensor), dim=1).unsqueeze(-1).to(args.device)
+        frames_tensor = torch.cat((input_tensor, target_tensor), dim=1).unsqueeze(2).to(args.device)    # [B, Tin+Tout, 1, H, W]
         Bcur = frames_tensor.size(0)
         _, real_input_flag = flags_eval(args,batch_size=Bcur)
 
@@ -424,8 +421,6 @@ def run_inference(model, test_dataloader, mask_tensor, criterion, metric, args, 
     avg_loss   = total_loss / len(test_dataloader)
     avg_metric = total_metric / len(test_dataloader)
     return avg_loss, avg_metric, torch.cat(preds_all, dim=0)
-
-
 # %%
 if __name__ == "__main__":
     # %%
@@ -459,11 +454,9 @@ if __name__ == "__main__":
     parser.add_argument('--variable', type=str, default='i10fg', help='Input variable to predict')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
     parser.add_argument('--model_name', type=str, default='predrnn_v2', help='Model to use')
-    parser.add_argument('--activation_layer', type=str, default='gelu', help='Activation function')
-    parser.add_argument('--transform', type=str_or_none, default=None, help='Data transformation type')
+    parser.add_argument('--transform', type=str_or_none, default='minmax', help='Data transformation type')
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training')
     parser.add_argument('--num_workers', type=int, default=16, help='Number of workers for data loading')
-    parser.add_argument('--weights_seed', type=int, default=42, help='Random seed for weight initialization')
     parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     parser.add_argument('--loss_name', type=str, default='MaskedCharbonnierLoss', help='Loss function name')
     parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
@@ -471,7 +464,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_sequence_length', type=int, default=36, help='Output window size (number of timesteps)')
     parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
     parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
-    parser.add_argument('--is_training', type=int, default=0, help='Whether the model is in training mode')
+    parser.add_argument('--is_training', type=int, default=1, help='Whether the model is in training mode')
     args, unknown = parser.parse_known_args()   
     args.total_sequence_length = args.input_sequence_length + args.output_sequence_length
     # === Merge them both ===
@@ -515,11 +508,12 @@ if __name__ == "__main__":
 
     mask = xr.open_dataset('mask_2d.nc').mask
     mask_tensor = torch.tensor(mask.values, device=args.device)  # [H, W], defnitely send it to device
+    mask_tensor_expanded = mask_tensor[None, None, None, :, :].to(args.device)  # [1,1,1, H,W]  # This is essential in masking and loss computation. Care must be taken for the shape according to the model design.
     
     # %%
     zarr_store = 'data/NYSM.zarr'
-    train_val_dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
-    test_dates_range = ['2023-03-26T02:00:00','2023-03-26T07:59:59']
+    train_val_dates_range = ['2021-01-01T00:00:00', '2023-12-31T23:59:59']
+    test_dates_range = ['2024-01-01T00:00:00','2024-12-31T23:59:59']
     freq = '5min'
     data_seed = 42
 
@@ -531,12 +525,12 @@ if __name__ == "__main__":
         input_transform = Transform(
             mode=args.transform,  # 'standard' or 'minmax'
             stats=input_stats,
-            feature_axis=-1     # Channels last
+            feature_axis=-1     # Channels 2, in B,T,C,H,W
         )   
         target_transform = Transform(
             mode=args.transform,  # 'standard' or 'minmax'
             stats=target_stats,
-            feature_axis=-1     # Channels last
+            feature_axis=-1     # Channels 2, in B,T,C,H,W
         )
     else:
         input_transform = None
@@ -612,12 +606,11 @@ if __name__ == "__main__":
 
     # Define the loss criterion and metric here, based on input loss name. The functions are sent to the GPU inside 
     if args.loss_name == "MaskedCharbonnierLoss":
-        criterion = MaskedCharbonnierLoss(mask_tensor,eps=1e-3)
+        criterion = MaskedCharbonnierLoss(mask_tensor_expanded,eps=1e-3)
     elif args.loss_name == "MaskedCombinedMAEQuantileLoss":
-        criterion = MaskedCombinedMAEQuantileLoss(mask_tensor, tau=0.95, mae_weight=0.5, quantile_weight=0.5)
-    
-    metric = MaskedErrorLoss(mask_tensor).to(args.device)
+        criterion = MaskedCombinedMAEQuantileLoss(mask_tensor_expanded, tau=0.95, mae_weight=0.5, quantile_weight=0.5)
 
+    metric = MaskedErrorLoss(mask_tensor_expanded).to(args.device)
     # === Optimizer, scheduler, and early stopping ===
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scheduler = ExponentialLR(optimizer, gamma=0.9)
@@ -630,19 +623,7 @@ if __name__ == "__main__":
     if not dist.is_initialized() or dist.get_rank() == 0:
         wandb.init(
             project="Gust_Nowcast",
-            config={
-                "model_name": args.model_name,
-                "activation_layer": args.activation_layer,
-                "batch_size": args.batch_size,
-                "num_workers": args.num_workers,
-                "weights_seed": args.weights_seed,
-                "loss_name": args.loss_name,
-                "input_sequence_length": args.input_sequence_length,
-                "output_sequence_length": args.output_sequence_length,
-                "train_val_dates_range": train_val_dates_range,
-                "transform": args.transform,
-                "patch_size": args.patch_size,
-            },
+            config=wandb_safe_config(args),  # Use the safe config function to avoid issues with non-serializable types
             name=args.checkpoint_dir[len('checkpoints/'):].replace('/','_'),
             dir="wandb_logs"
         )
@@ -662,7 +643,7 @@ if __name__ == "__main__":
             train_sampler=train_sampler, 
             scheduler=scheduler,
             early_stopping=early_stopping,
-            mask_tensor=mask_tensor,
+            mask_tensor_expanded=mask_tensor_expanded,
             input_transform=input_transform,
             target_transform=target_transform,
             args=args,
@@ -705,7 +686,7 @@ if __name__ == "__main__":
             test_dataloader=test_dataloader,
             criterion=criterion,
             metric=metric,
-            mask_tensor=mask_tensor,
+            mask_tensor_expanded=mask_tensor_expanded,
             input_transform=input_transform,
             args=args,
         )
