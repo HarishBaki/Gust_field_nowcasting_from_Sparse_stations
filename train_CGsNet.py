@@ -140,7 +140,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
 
     itr = 0
 
-    scaler = GradScaler("cuda")   # <<< AMP scaler
+    scaler = GradScaler("cuda",enabled=False)   # <<< AMP scaler
 
     for epoch in range(start_epoch, args.num_epochs):
         if train_sampler is not None:
@@ -170,12 +170,11 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             use_teacher_forcing = False
 
             # === AMP forward/backward ===
-            with autocast("cuda", dtype=torch.float16):   # <<< AMP autocast
+            with autocast("cuda", dtype=torch.bfloat16):   # <<< AMP autocast
                 loss, metric_value  = forward_step(input_tensor, target_tensor, use_teacher_forcing, model, criterion, metric, mask_tensor_expanded, args, input_transform, return_preds=False)
 
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            loss.backward()
+            optimizer.step()
 
             train_loss_total += loss.item()
             train_metric_total += metric_value.item()
@@ -206,7 +205,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                 input_tensor = input_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, 1, H, W]
                 target_tensor = target_tensor.to(args.device, non_blocking=True) # [B, Tin+Tout, 1, H, W]
 
-                with autocast("cuda", dtype=torch.float16):   # AMP works for eval too
+                with autocast("cuda", dtype=torch.bfloat16):   # AMP works for eval too
                     loss, metric_value  = forward_step(input_tensor, target_tensor, False, model, criterion, metric, mask_tensor_expanded, args, input_transform, return_preds=False)
 
                 val_loss_total += loss.item()
