@@ -49,8 +49,12 @@ def forward_step(input_tensor,target_tensor,use_teacher_forcing,
     
     Parameters
     ----------
-    frames_tensor : torch.Tensor
-        Shape [B, Tin+Tout, H, W, 1]
+    input_tensor : torch.Tensor
+        Shape [B, Tin, H, W, 1]
+    target_tensor : torch.Tensor
+        Shape [B, Tout, H, W, 1]
+    use_teacher_forcing : bool
+        Whether to use teacher forcing during training
     model : nn.Module
         CGsNet model
     criterion : callable
@@ -58,9 +62,9 @@ def forward_step(input_tensor,target_tensor,use_teacher_forcing,
     metric : callable
         Metric function
     mask_tensor_expanded : torch.Tensor
-        Mask of shape [1,1,H,W,1]
+        Mask of shape [1,1,1,H,W]
     args : Namespace
-        Holds config (patch_size, input_sequence_length, etc.)
+        Holds config (input_sequence_length,target_sequence_length, etc.)
     input_transform : Transform, optional
         Transformation with .__call__ and .inverse
     return_preds : bool, optional
@@ -157,11 +161,11 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             itr += 1
 
             input_tensor, target_tensor,_,_ = batch  # input_tensor, target_tensor: [B, Tin, H, W], [B, Tout, H, W]
-            input_tensor = input_tensor.unsqueeze(2)     # [B, Tin+Tout, 1, H, W]
-            target_tensor = target_tensor.unsqueeze(2)   # [B, Tin+Tout, 1, H, W]
+            input_tensor = input_tensor.unsqueeze(2)     # [B, Tin, 1, H, W]
+            target_tensor = target_tensor.unsqueeze(2)   # [B, Tin, 1, H, W]
 
-            input_tensor = input_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, 1, H, W]
-            target_tensor = target_tensor.to(args.device, non_blocking=True) # [B, Tin+Tout, 1, H, W]
+            input_tensor = input_tensor.to(args.device, non_blocking=True)   # [B, Tin, 1, H, W]
+            target_tensor = target_tensor.to(args.device, non_blocking=True) # [B, Tout, 1, H, W]
 
             Bcur = input_tensor.size(0)
 
@@ -202,8 +206,8 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                 input_tensor = input_tensor.unsqueeze(2)     # [B, Tin+Tout, 1, H, W]
                 target_tensor = target_tensor.unsqueeze(2)   # [B, Tin+Tout, 1, H, W]
 
-                input_tensor = input_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, 1, H, W]
-                target_tensor = target_tensor.to(args.device, non_blocking=True) # [B, Tin+Tout, 1, H, W]
+                input_tensor = input_tensor.to(args.device, non_blocking=True)   # [B, Tin, 1, H, W]
+                target_tensor = target_tensor.to(args.device, non_blocking=True) # [B, Tout, 1, H, W]
 
                 with autocast("cuda", dtype=torch.bfloat16):   # AMP works for eval too
                     loss, metric_value  = forward_step(input_tensor, target_tensor, False, model, criterion, metric, mask_tensor_expanded, args, input_transform, return_preds=False)
@@ -268,11 +272,11 @@ def run_inference(model, test_dataloader, mask_tensor_expanded, criterion, metri
 
     for batch in tqdm(test_dataloader, desc="[Test]"):
         input_tensor, target_tensor,_,_ = batch  # input_tensor, target_tensor: [B, Tin, H, W], [B, Tout, H, W]
-        input_tensor = input_tensor.unsqueeze(2)     # [B, Tin+Tout, 1, H, W]
-        target_tensor = target_tensor.unsqueeze(2)   # [B, Tin+Tout, 1, H, W]
+        input_tensor = input_tensor.unsqueeze(2)     # [B, Tin, 1, H, W]
+        target_tensor = target_tensor.unsqueeze(2)   # [B, Tout, 1, H, W]
 
-        input_tensor = input_tensor.to(args.device, non_blocking=True)   # [B, Tin+Tout, 1, H, W]
-        target_tensor = target_tensor.to(args.device, non_blocking=True) # [B, Tin+Tout, 1, H, W]
+        input_tensor = input_tensor.to(args.device, non_blocking=True)   # [B, Tin, 1, H, W]
+        target_tensor = target_tensor.to(args.device, non_blocking=True) # [B, Tout, 1, H, W]
 
         loss, metric_value, preds = forward_step(
             input_tensor, target_tensor, False,
