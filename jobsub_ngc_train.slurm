@@ -1,0 +1,106 @@
+#!/bin/bash
+
+#SBATCH --job-name=ddp_train
+#SBATCH --output=slurmout/ddp_train-%j.out
+#SBATCH --error=slurmout/ddp_train-%j.err
+#SBATCH --time=07-00:00:00
+##SBATCH --mem=640gb
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=2
+#SBATCH --gpus-per-task=1
+#SBATCH --cpus-per-task=32
+#SBATCH --container-image=docker://nvcr.io/nvidia/physicsnemo/physicsnemo:25.03
+#SBATCH --container-name=physicsnemo
+#SBATCH --container-mounts=/home/hb533188/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project
+#SBATCH --container-workdir=/mnt/current_project
+# #SBATCH --container-image=/home/harish/softwares/container_images/physicsnemo:25.03.sqsh
+# #SBATCH --container-mounts=/home/harish:/home/harish,/home/harish/Ongoing_Research/Gust_field_nowcasting_from_Sparse_stations:/workspace,/data/harish/Gust_field_nowcasting_from_Sparse_stations:/workspace/data
+# #SBATCH --container-workdir=/workspace
+
+# Optionally pass SLURM values into the shell script as environment variables
+export nproc_per_node=${SLURM_NTASKS_PER_NODE}
+export num_workers=${SLURM_CPUS_PER_TASK}
+export MASTER_ADDR=$(scontrol show hostnames $SLURM_NODELIST | head -n 1)
+export MASTER_PORT=$((20000 + RANDOM % 20000))
+
+# ===============================
+# Set defaults if not provided
+# ===============================
+variable=${variable:-'i10fg'}
+checkpoint_dir=${checkpoint_dir:-'checkpoints'}
+model_name=${model_name:-'SwinT2UNet'} # Options: 'nowcastnet', 'predrnn_v2', 'CGsNet'
+transform=${transform:-'minmax'}
+batch_size=${batch_size:-12}
+num_workers=${num_workers:-16}
+num_epochs=${num_epochs:-200}
+loss_name=${loss_name:-'MaskedCharbonnierLoss'}
+resume=${resume:-'false'}
+input_sequence_length=${input_sequence_length:-36}
+output_sequence_length=${output_sequence_length:-36}
+step_size=${step_size:-1}
+forecast_offset=${forecast_offset:-0}
+is_training=${is_training:-1}
+train_mode=${train_mode:-0} # 0 for evolution network, 1 for nowcastnet network
+
+# ===============================
+# Echo all config values
+# ===============================
+echo "======================================"
+echo "Launching training with configuration:"
+echo "--------------------------------------"
+echo "Variable:                 $variable"
+echo "Checkpoint Dir:           $checkpoint_dir"
+echo "Model:                    $model_name"
+echo "Transform:                $transform"
+echo "Batch Size:               $batch_size"
+echo "Num Workers:              $num_workers"
+echo "Num Epochs:               $num_epochs"
+echo "Loss Function:            $loss_name"
+echo "Resume from Checkpoint:   $resume"
+echo "Input Window Size:        $input_sequence_length"
+echo "Output Window Size:       $output_sequence_length"
+echo "Step Size:                $step_size"
+echo "Forecast Offset:          $forecast_offset"
+echo "Is Training:              $is_training"
+echo "Train Mode:               $train_mode"
+echo "======================================"
+
+export PYTHONNOUSERSITE=1   # make Python use the system site-packages, not from local user
+# Install required Python packages inside the container
+echo "Installing packages..."
+pip install --quiet --no-deps timm torchmetrics seaborn herbie-data lxml metpy pyproj lpips scikit-image --prefix=/tmp/python
+echo "Done installing packages"
+export PYTHONPATH=/tmp/python/local/lib/python3.12/site-packages:/tmp/python/local/lib/python3.12/dist-packages:$PYTHONPATH  # I already know that the container python is 3.12
+
+# ===============================
+# Run the training script
+# ===============================
+
+if [ "$model_name" = "nowcastnet" ]; then
+  train_file="train_nowcastnet.py"
+elif [ "$model_name" = "predrnn_v2" ]; then
+  train_file="train_PredRNN_V2.py"
+elif [ "$model_name" = "CGsNet" ]; then
+  train_file="train_CGsNet.py"
+else
+  train_file="train.py"
+fi
+
+export WANDB_API_KEY='dc0afee88730cccd1bffb8e55385f014893b4473'
+
+torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT $train_file \
+  --variable "$variable" \
+  --checkpoint_dir "$checkpoint_dir" \
+  --model_name "$model_name" \
+  --transform "$transform" \
+  --batch_size "$batch_size" \
+  --num_workers "$num_workers" \
+  --num_epochs "$num_epochs" \
+  --loss_name "$loss_name" \
+  --input_sequence_length "$input_sequence_length" \
+  --output_sequence_length "$output_sequence_length" \
+  --step_size "$step_size" \
+  --forecast_offset "$forecast_offset" \
+  --is_training "$is_training" \
+  --train_mode "$train_mode" \
+  $( [ "$resume" = "true" ] && echo "--resume" )

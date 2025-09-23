@@ -254,7 +254,7 @@ if __name__ == "__main__":
     
     # %%
     zarr_store = 'data/NYSM.zarr'
-    train_val_dates_range = ['2021-01-01T00:00:00', '2021-01-31T23:59:59']
+    train_val_dates_range = ['2021-01-01T00:00:00', '2023-12-31T23:59:59']
     freq = '5min'
     data_seed = 42
 
