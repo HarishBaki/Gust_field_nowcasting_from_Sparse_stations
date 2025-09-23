@@ -287,19 +287,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Training configuration for wind prediction model")
     parser.add_argument('--variable', type=str, default='i10fg', help='Input variable to predict')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
-    parser.add_argument('--model_name', type=str, default='UNet', help='Model to use')
-    parser.add_argument('--transform', type=str_or_none, default='minmax', help='Data transformation type')
+    parser.add_argument('--model_name', type=str, default='SwinT2UNet', help='Model to use')
+    parser.add_argument('--transform', type=str_or_none, default='None', help='Data transformation type')
     parser.add_argument('--batch_size', type=int, default=8, help='Batch size for training')
     parser.add_argument('--num_workers', type=int, default=16, help='Number of workers for data loading')
     parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     parser.add_argument('--loss_name', type=str, default='MaskedCharbonnierLoss', help='Loss function name')
     parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
-    parser.add_argument('--input_sequence_length', type=int, default=36, help='Input window size (number of timesteps)')
-    parser.add_argument('--output_sequence_length', type=int, default=36, help='Output window size (number of timesteps)')
+    parser.add_argument('--input_sequence_length', type=int, default=1, help='Input window size (number of timesteps)')
+    parser.add_argument('--output_sequence_length', type=int, default=1, help='Output window size (number of timesteps)')
     parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
     parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
     parser.add_argument('--is_training', type=int, default=1, help='Whether the model is in training mode')
-    args, unknown = parser.parse_known_args()   
+    args, unknown = parser.parse_known_args([] if 'ipykernel_launcher' in sys.argv[0] else None)
     args.total_sequence_length = args.input_sequence_length + args.output_sequence_length
     # === Merge them both ===
     merged = {**vars(defaults), **vars(args)} 
@@ -345,7 +345,7 @@ if __name__ == "__main__":
     
     # %%
     zarr_store = 'data/NYSM.zarr'
-    train_val_dates_range = ['2021-01-01T00:00:00', '2023-12-31T23:59:59']
+    train_val_dates_range = ['2021-01-01T00:00:00', '2021-01-31T23:59:59']
     test_dates_range = ['2024-01-01T00:00:00','2024-12-31T23:59:59']
     freq = '5min'
     data_seed = 42
@@ -358,12 +358,12 @@ if __name__ == "__main__":
         input_transform = Transform(
             mode=args.transform,  # 'standard' or 'minmax'
             stats=input_stats,
-            feature_axis=-1     # Channels 2, in B,T,C,H,W
+            feature_axis=1     # Channels 1, in B,T,H,W
         )   
         target_transform = Transform(
             mode=args.transform,  # 'standard' or 'minmax'
             stats=target_stats,
-            feature_axis=-1     # Channels 2, in B,T,C,H,W
+            feature_axis=1     # Channels 1, in B,T,H,W
         )
     else:
         input_transform = None
@@ -524,8 +524,8 @@ if __name__ == "__main__":
             name=args.checkpoint_dir[len('checkpoints/'):].replace('/','_'),
             dir="wandb_logs"
         )
-    '''
     # %%
+    '''
     # === Checking the data loading bottle neck ===
     print(f"🧪 [Rank {rank}] Testing DataLoader...")
     loader_start = time.time()
