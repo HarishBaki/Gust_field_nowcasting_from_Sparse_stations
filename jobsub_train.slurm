@@ -29,7 +29,7 @@ export MASTER_PORT=$((20000 + RANDOM % 20000))
 # ===============================
 variable=${variable:-'i10fg'}
 checkpoint_dir=${checkpoint_dir:-'checkpoints'}
-model_name=${model_name:-'CGsNet'} # Options: 'nowcastnet', 'predrnn_v2', 'CGsNet'
+model_name=${model_name:-'UNet'} # Options: 'nowcastnet', 'predrnn_v2', 'CGsNet'
 transform=${transform:-'minmax'}
 batch_size=${batch_size:-12}
 num_workers=${num_workers:-16}
@@ -84,8 +84,7 @@ elif [ "$model_name" = "predrnn_v2" ]; then
 elif [ "$model_name" = "CGsNet" ]; then
   train_file="train_CGsNet.py"
 else
-  echo "Error: Unsupported model name '$model_name'. Supported models are 'nowcastnet', 'predrnn_v2', and 'CGsNet'."
-  exit 1
+  train_file="train.py"
 fi
 
 torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT $train_file \
