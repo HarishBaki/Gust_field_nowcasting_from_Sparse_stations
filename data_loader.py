@@ -10,7 +10,7 @@ import time
 import os
 # %%
 class Transform:
-    def __init__(self, mode, stats, feature_axis=-1):
+    def __init__(self, mode, stats, feature_axis=None):
         """
         feature_axis: which axis holds variables/channels.
         e.g. 1 for [B,C,H,W,...], -1 for [B,T,H,W,C]
@@ -32,13 +32,17 @@ class Transform:
             raise ValueError("mode must be 'standard' or 'minmax'")
 
     def _reshape_params(self, x):
-        # Build [1,1,...,C,...,1] with C at feature_axis
-        shape = [1] * x.ndim
-        C = self.param1.numel()
-        axis = self.feature_axis if self.feature_axis >= 0 else x.ndim + self.feature_axis
-        shape[axis] = C
-        p1 = self.param1.reshape(shape).to(x.device)
-        p2 = self.param2.reshape(shape).to(x.device)
+        if self.feature_axis is None:
+            p1 = self.param1.to(x.device).view(1, *([1] * (x.ndim - 1)))
+            p2 = self.param2.to(x.device).view(1, *([1] * (x.ndim - 1)))
+        else:
+            # Build [1,1,...,C,...,1] with C at feature_axis
+            shape = [1] * x.ndim
+            C = self.param1.numel()
+            axis = self.feature_axis if self.feature_axis >= 0 else x.ndim + self.feature_axis
+            shape[axis] = C
+            p1 = self.param1.reshape(shape).to(x.device)
+            p2 = self.param2.reshape(shape).to(x.device)
         return p1, p2
 
     def __call__(self, x):
