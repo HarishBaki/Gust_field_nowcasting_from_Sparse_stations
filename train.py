@@ -8,6 +8,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.optim.lr_scheduler import ExponentialLR
+from torch.amp import autocast, GradScaler
 
 
 import xarray as xr
@@ -29,13 +30,13 @@ from models.UNet import UNet
 from models.SwinT2_UNet import SwinT2UNet
 from models.util import initialize_weights_xavier,initialize_weights_he
 
-from losses import MaskedMSELoss, MaskedRMSELoss, MaskedTVLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
+from losses import MaskedErrorLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
 
 from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store
 
 # %%
 def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, metric, device, num_epochs,
-               checkpoint_dir, train_sampler, scheduler, early_stopping, mask_tensor,input_transform=None,target_transform=None,resume=False):
+               checkpoint_dir, train_sampler, scheduler, early_stopping, mask_tensor_expanded, input_transform=None, target_transform=None, resume=False):
 
     os.makedirs(checkpoint_dir, exist_ok=True)
 
@@ -75,8 +76,10 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
             #    break
 
             optimizer.zero_grad()
-            output = model(torch.where(mask_tensor, input_tensor, 0))
-            loss = criterion(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
+            # === AMP forward/backward ===
+            with autocast("cuda", dtype=torch.bfloat16):   # <<< AMP autocast
+                output = model(torch.where(mask_tensor_expanded, input_tensor, 0))
+                loss = criterion(torch.where(mask_tensor_expanded, output, 0), torch.where(mask_tensor_expanded, target_tensor, 0))
             loss.backward()
             optimizer.step()
 
@@ -88,7 +91,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                 target_tensor = target_transform.inverse(target_tensor)
 
             # Compute the metric
-            metric_value = metric(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
+            metric_value = metric(torch.where(mask_tensor_expanded, output, 0), torch.where(mask_tensor_expanded, target_tensor, 0),mode='mse', reduction='mean')
             train_metric_total += metric_value.item()
 
             if show_progress:
@@ -113,8 +116,8 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                     input_tensor = input_transform(input_tensor)
                     target_tensor = target_transform(target_tensor)
 
-                output = model(torch.where(mask_tensor, input_tensor, 0))
-                loss = criterion(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
+                output = model(torch.where(mask_tensor_expanded, input_tensor, 0))
+                loss = criterion(torch.where(mask_tensor_expanded, output, 0), torch.where(mask_tensor_expanded, target_tensor, 0))
                 val_loss_total += loss.item()
 
                 # === Optional: Apply inverse transform if needed ===
@@ -123,7 +126,7 @@ def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, me
                     target_tensor = target_transform.inverse(target_tensor)
                 
                 # Compute the metric
-                metric_value = metric(torch.where(mask_tensor, output, 0), torch.where(mask_tensor, target_tensor, 0))
+                metric_value = metric(torch.where(mask_tensor_expanded, output, 0), torch.where(mask_tensor_expanded, target_tensor, 0),mode='mse', reduction='mean')
                 val_metric_total += metric_value.item()
 
                 if show_progress:
@@ -182,18 +185,18 @@ if __name__ == "__main__":
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
     parser.add_argument('--model_name', type=str, default='SwinT2UNet', choices=['DCNN', 'UNet', 'SwinT2UNet', 'GoogleUNet'], help='Model to use')
     parser.add_argument('--activation_layer', type=str, default='gelu', help='Activation function')
-    parser.add_argument('--transform', type=str_or_none, default=None, choices=['standard', 'minmax',None], help='Data transformation type')
+    parser.add_argument('--transform', type=str_or_none, default='minmax', choices=['standard', 'minmax',None], help='Data transformation type')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--num_workers', type=int, default=16, help='Number of workers for data loading')
     parser.add_argument('--weights_seed', type=int, default=42, help='Random seed for weight initialization')
     parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
-    parser.add_argument('--loss_name', type=str, default='MaskedCombinedMAEQuantileLoss', help='Loss function name')
+    parser.add_argument('--loss_name', type=str, default='MaskedCharbonnierLoss', help='Loss function name')
     parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
-    parser.add_argument('--input_sequence_length', type=int, default=6, help='Input window size (number of timesteps)')
-    parser.add_argument('--output_sequence_length', type=int, default=3, help='Output window size (number of timesteps)')
+    parser.add_argument('--input_sequence_length', type=int, default=36, help='Input window size (number of timesteps)')
+    parser.add_argument('--output_sequence_length', type=int, default=36, help='Output window size (number of timesteps)')
     parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
     parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
-    args, unknown = parser.parse_known_args()
+    args, unknown = parser.parse_known_args([] if 'ipykernel_launcher' in sys.argv[0] else None)
 
     # Update variables from parsed arguments
     variable = args.variable
@@ -247,10 +250,11 @@ if __name__ == "__main__":
 
     mask = xr.open_dataset('mask_2d.nc').mask
     mask_tensor = torch.tensor(mask.values, device=device)  # [H, W], defnitely send it to device
+    mask_tensor_expanded = mask_tensor[None, None, :, :].to(device)  # [1,1, H,W]  # This is essential in masking and loss computation. Care must be taken for the shape according to the model design.
     
     # %%
     zarr_store = 'data/NYSM.zarr'
-    train_val_dates_range = ['2019-01-01T00:00:00', '2019-12-31T23:59:59']
+    train_val_dates_range = ['2021-01-01T00:00:00', '2021-01-31T23:59:59']
     freq = '5min'
     data_seed = 42
 
@@ -261,11 +265,13 @@ if __name__ == "__main__":
     if transform is not None:
         input_transform = Transform(
             mode=transform,  # 'standard' or 'minmax'
-            stats=input_stats
+            stats=input_stats,
+            feature_axis=None,
         )
         target_transform = Transform(
             mode=transform,  # 'standard' or 'minmax'
-            stats=target_stats
+            stats=target_stats,
+            feature_axis=None,
         )
     else:
         input_transform = None
@@ -282,6 +288,7 @@ if __name__ == "__main__":
         missing_times=None,
         mode=mode,
         data_seed=data_seed,
+        step_size=step_size,
         forecast_offset=forecast_offset
         )
 
@@ -309,7 +316,9 @@ if __name__ == "__main__":
         freq,
         missing_times=None,
         mode=mode,
-        data_seed=data_seed
+        data_seed=data_seed,
+        step_size=output_sequence_length,
+        forecast_offset=forecast_offset
         )
 
     if is_distributed():
@@ -400,18 +409,13 @@ if __name__ == "__main__":
     if is_distributed():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
-    # Define the loss criterion and metric here, based on input loss name. The functions are sent to the GPU inside
-    if loss_name == "MaskedMSELoss":
-        criterion = MaskedMSELoss(mask_tensor)
-    elif loss_name == "MaskedRMSELoss":
-        criterion = MaskedRMSELoss(mask_tensor)
-    elif loss_name == "MaskedTVLoss":
-        criterion = MaskedTVLoss(mask_tensor,tv_loss_weight=0.001, beta=0.5)    
-    elif loss_name == "MaskedCharbonnierLoss":
-        criterion = MaskedCharbonnierLoss(mask_tensor,eps=1e-3)
-    elif loss_name == "MaskedCombinedMAEQuantileLoss":
-        criterion = MaskedCombinedMAEQuantileLoss(mask_tensor, tau=0.95, mae_weight=0.5, quantile_weight=0.5)
-    metric = MaskedRMSELoss(mask_tensor)
+    # Define the loss criterion and metric here, based on input loss name. The functions are sent to the GPU inside 
+    if args.loss_name == "MaskedCharbonnierLoss":
+        criterion = MaskedCharbonnierLoss(mask_tensor_expanded,eps=1e-3)
+    elif args.loss_name == "MaskedCombinedMAEQuantileLoss":
+        criterion = MaskedCombinedMAEQuantileLoss(mask_tensor_expanded, tau=0.95, mae_weight=0.5, quantile_weight=0.5)
+
+    metric = MaskedErrorLoss(mask_tensor_expanded).to(device)
 
     # === Optimizer, scheduler, and early stopping ===
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -439,8 +443,9 @@ if __name__ == "__main__":
             name=checkpoint_dir[len('checkpoints/'):].replace('/','_'),
             dir="wandb_logs"
         )
-    '''
+    
     # %%
+    '''
     # === Checking the data loading bottle neck ===
     print(f"🧪 [Rank {rank}] Testing DataLoader...")
     loader_start = time.time()
@@ -479,7 +484,7 @@ if __name__ == "__main__":
         train_sampler=train_sampler, 
         scheduler=scheduler,
         early_stopping=early_stopping,
-        mask_tensor=mask_tensor,
+        mask_tensor_expanded=mask_tensor_expanded,
         input_transform=input_transform,
         target_transform=target_transform,
         resume=resume
