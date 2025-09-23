@@ -454,8 +454,7 @@ if __name__ == "__main__":
                         kernel=kernel,
                         final_kernel=final_kernel, 
                         n_layers=n_layers,
-                        act_layer=act_layer,
-                        hard_enforce_stations=True).to(device)
+                        act_layer=act_layer).to(device)
     elif args.model_name == "UNet":
         C = 32
         n_layers = 4
@@ -467,8 +466,7 @@ if __name__ == "__main__":
                         dropout_prob=dropout_prob,
                         drop_path_prob=drop_path_prob,
                         act_layer=act_layer,
-                        n_layers=n_layers,
-                        hard_enforce_stations=True).to(device)
+                        n_layers=n_layers).to(device)
     
     elif args.model_name == "SwinT2UNet":
         C = 32
@@ -487,8 +485,7 @@ if __name__ == "__main__":
                             attn_drop=attn_drop,
                             proj_drop=proj_drop,
                             mlp_ratio=mlp_ratio,
-                            act_layer=act_layer,
-                            hard_enforce_stations=True).to(device)
+                            act_layer=act_layer).to(device)
     
     if args.activation_layer == 'gelu':
             initialize_weights_xavier(model,seed = args.weights_seed)
