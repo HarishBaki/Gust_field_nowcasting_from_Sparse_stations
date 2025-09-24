@@ -11,7 +11,7 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --container-image=docker://nvcr.io/nvidia/physicsnemo/physicsnemo:25.03
 #SBATCH --container-name=physicsnemo
-#SBATCH --container-mounts=/home/hb533188/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project
+#SBATCH --container-mounts=/home/hb533188/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project,/home/hb533188/.secrets:/mnt/current_project/.secrets
 #SBATCH --container-workdir=/mnt/current_project
 # #SBATCH --container-image=/home/harish/softwares/container_images/physicsnemo:25.03.sqsh
 # #SBATCH --container-mounts=/home/harish:/home/harish,/home/harish/Ongoing_Research/Gust_field_nowcasting_from_Sparse_stations:/workspace,/data/harish/Gust_field_nowcasting_from_Sparse_stations:/workspace/data
@@ -85,7 +85,7 @@ elif [ "$model_name" = "CGsNet" ]; then
 else
   train_file="train.py"
 fi
-
+export WANDB_API_KEY="$(cat /mnt/current_project/.secrets/wandb_api_key)"
 torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT $train_file \
   --variable "$variable" \
   --checkpoint_dir "$checkpoint_dir" \
