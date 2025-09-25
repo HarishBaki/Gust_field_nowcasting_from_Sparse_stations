@@ -64,7 +64,7 @@ def forward_step(input_tensor,target_tensor,use_teacher_forcing,
     mask_tensor_expanded : torch.Tensor
         Mask of shape [1,1,1,H,W]
     args : Namespace
-        Holds config (input_sequence_length,target_sequence_length, etc.)
+        Holds config (input_sequence_length,output_sequence_length, etc.)
     input_transform : Transform, optional
         Transformation with .__call__ and .inverse
     return_preds : bool, optional
@@ -286,7 +286,7 @@ def run_inference(model, test_dataloader, mask_tensor_expanded, criterion, metri
         )
         total_loss += loss.item()
         total_metric += metric_value.item()
-        preds_all.append(preds[:, args.input_sequence_length-1 : ].cpu())
+        preds_all.append(preds.cpu())
 
     avg_loss   = total_loss / len(test_dataloader)
     avg_metric = total_metric / len(test_dataloader)
