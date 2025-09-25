@@ -61,7 +61,7 @@ def forward_step(input_tensor,target_tensor,
     mask_tensor_expanded : torch.Tensor
         Mask of shape [1,1,H,W]
     args : Namespace
-        Holds config (input_sequence_length,target_sequence_length, etc.)
+        Holds config (input_sequence_length,output_sequence_length, etc.)
     input_transform : Transform, optional
         Transformation with .__call__ and .inverse
     return_preds : bool, optional
@@ -265,7 +265,7 @@ def run_inference(model, test_dataloader, mask_tensor_expanded, criterion, metri
         )
         total_loss += loss.item()
         total_metric += metric_value.item()
-        preds_all.append(preds[:, args.input_sequence_length-1 : ].cpu())
+        preds_all.append(preds.cpu())
 
     avg_loss   = total_loss / len(test_dataloader)
     avg_metric = total_metric / len(test_dataloader)
@@ -276,10 +276,9 @@ if __name__ == "__main__":
     # %%
     # === Defaults ===
     defaults = SimpleNamespace(
-        activation_layer='gelu',
+        act_layer = nn.GELU,
         weights_seed=42,
         img_size=(256,288),
-
     )
 
     # === Argument parsing ===
@@ -432,67 +431,31 @@ if __name__ == "__main__":
 
     # %%
     # === Set up device, model, loss, optimizer ===
-    input_resolution = args.img_size  # (H, W)
-    in_channels = args.input_sequence_length
-    out_channels = args.output_sequence_length
-
-    if args.activation_layer == 'gelu':
-        act_layer = nn.GELU
-    elif args.activation_layer == 'relu':
-        act_layer = nn.ReLU
-    elif args.activation_layer == 'leakyrelu':
-        act_layer = nn.LeakyReLU
 
     if args.model_name == "DCNN":
-        C = 48
-        kernel = (7, 7)
-        final_kernel = (3, 3)
-        n_layers = 7
-        model = DCNN(in_channels=in_channels, 
-                        out_channels=out_channels, 
-                        C=C, 
-                        kernel=kernel,
-                        final_kernel=final_kernel, 
-                        n_layers=n_layers,
-                        act_layer=act_layer).to(device)
+        args.C = 48
+        args.kernel = (7, 7)
+        args.final_kernel = (3, 3)
+        args.n_layers = 7
+        model = DCNN(args).to(args.device)
     elif args.model_name == "UNet":
-        C = 32
-        n_layers = 4
-        dropout_prob=0.2
-        drop_path_prob=0.2
-        model = UNet(in_channels=in_channels, 
-                        out_channels=out_channels,
-                        C=C, 
-                        dropout_prob=dropout_prob,
-                        drop_path_prob=drop_path_prob,
-                        act_layer=act_layer,
-                        n_layers=n_layers).to(device)
+        args.C = 32
+        args.n_layers = 4
+        args.dropout_prob=0.2
+        args.drop_path_prob=0.2
+        model = UNet(args).to(args.device)
     
     elif args.model_name == "SwinT2UNet":
-        C = 32
-        n_layers = 4
-        window_sizes = [8, 8, 4, 4, 2]
-        head_dim = 32
-        attn_drop = 0.2
-        proj_drop = 0.2
-        mlp_ratio = 4.0
-        model = SwinT2UNet(input_resolution=input_resolution, 
-                        in_channels=in_channels, 
-                        out_channels=out_channels, 
-                        C=C, n_layers=n_layers, 
-                        window_sizes=window_sizes,
-                            head_dim=head_dim,
-                            attn_drop=attn_drop,
-                            proj_drop=proj_drop,
-                            mlp_ratio=mlp_ratio,
-                            act_layer=act_layer).to(device)
-    
-    if args.activation_layer == 'gelu':
-            initialize_weights_xavier(model,seed = args.weights_seed)
-    elif args.activation_layer == 'relu':
-        initialize_weights_he(model,seed = args.weights_seed)
-    elif args.activation_layer == 'leakyrelu':
-        initialize_weights_he(model,seed = args.weights_seed)
+        args.C = 32
+        args.n_layers = 4
+        args.window_sizes = [8, 8, 4, 4, 2]
+        args.head_dim = 32
+        args.attn_drop = 0.2
+        args.proj_drop = 0.2
+        args.mlp_ratio = 4.0
+        model = SwinT2UNet(args).to(args.device)
+
+    initialize_weights_xavier(model,seed = args.weights_seed)
 
     if is_distributed():
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])

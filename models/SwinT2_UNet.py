@@ -283,94 +283,119 @@ class Decoder(nn.Module):
 
 class SwinT2UNet(nn.Module):
     '''
-    Swin Transformer V2 UNet
-    This architecture is implemented followed by the paper "Swin Transformer V2: Scaling Up Capacity and Resolution"
-    Parameters:
-    - input_resolution (tuple): Input resolution of the image.
-    - in_channels (int): Number of input channels.
-    - out_channels (int): Number of output channels.
-    - C (int): Number of channels in the intermediate layers.
-    - n_layers (int): Number of layers in the encoder and decoder.
-    - window_sizes (list): List of window sizes for each layer.
-    - head_dim (int): Dimension of each head in the multi-head attention.
-    - hard_enforce_stations (bool): If True, enforces station values in the output. Technically, the output will have station values at the station locations.
+    Swin Transformer V2 U-Net for image-to-image reconstruction.
+
+    Config-driven version: all hyperparameters are taken from a single `configs` object.
+
+    Structure:
+    - Input projection → Encoder → Bottleneck → Decoder → Output projection.
+    - Encoder downsamples (halving resolution per stage, doubling channels).
+    - Decoder upsamples (restoring resolution, concatenating skip connections).
+    - Bottleneck captures long-range dependencies at lowest resolution.
+
+    Parameters expected in `configs`:
+    - input_resolution (tuple of int): (H, W)
+    - input_sequence_length (int): input channels (Tin)
+    - output_sequence_length (int): output channels (Tout)
+    - C (int): base channel dimension
+    - n_layers (int): number of encoder/decoder stages
+    - window_sizes (list[int]): attention window sizes
+    - head_dim (int): dimension per attention head
+    - attn_drop (float): attention dropout rate
+    - proj_drop (float): projection dropout rate
+    - mlp_ratio (float): MLP expansion ratio
+    - act_layer (nn.Module): activation (e.g. nn.GELU)
     '''
 
-    def __init__(self, input_resolution=(256,288), in_channels=3, out_channels=1, C=32, n_layers=4, attn_drop=0.2, proj_drop=0.2,mlp_ratio=4.0,act_layer=nn.GELU,
-                 window_sizes=[8,8,4,4], head_dim=32,hard_enforce_stations=False):
+    def __init__(self, configs):
         super().__init__()
-        self.input_resolution = input_resolution
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.C = C
-        self.n_layers = n_layers
-        self.window_sizes = window_sizes
-        self.head_dim = head_dim
-        self.input_proj = InputProj(in_channels, C,act_layer=act_layer)
-        self.hard_enforce_stations = hard_enforce_stations
-        self.encoder = Encoder(input_resolution=self.input_resolution, C=self.C, window_sizes=self.window_sizes, head_dim=self.head_dim, n_layers=self.n_layers,
-                               attn_drop=attn_drop, proj_drop=proj_drop,mlp_ratio=mlp_ratio,act_layer=act_layer)
-        self.bottleneck = Bottleneck(C=self.C, input_resolution=self.input_resolution, n_layers=self.n_layers, window_sizes=self.window_sizes, head_dim=self.head_dim,
-                                     attn_drop=attn_drop, proj_drop=proj_drop,mlp_ratio=mlp_ratio,act_layer=act_layer)
-        self.decoder = Decoder(input_resolution=self.input_resolution, C=self.C, window_sizes=self.window_sizes, head_dim=self.head_dim, n_layers=self.n_layers,
-                               attn_drop=attn_drop, proj_drop=proj_drop,mlp_ratio=mlp_ratio,act_layer=act_layer)
-        self.output_proj = OutputProj(in_channels=self.C, out_channels=self.out_channels)
-        
+        self.input_resolution = configs.img_size
+        self.input_sequence_length = configs.input_sequence_length
+        self.output_sequence_length = configs.output_sequence_length
+        self.C = configs.C
+        self.n_layers = configs.n_layers
+        self.window_sizes = configs.window_sizes
+        self.head_dim = configs.head_dim
+
+        self.input_proj = InputProj(self.input_sequence_length, self.C, act_layer=configs.act_layer)
+        self.encoder = Encoder(
+            input_resolution=self.input_resolution, C=self.C,
+            window_sizes=self.window_sizes, head_dim=self.head_dim,
+            n_layers=self.n_layers, attn_drop=configs.attn_drop,
+            proj_drop=configs.proj_drop, mlp_ratio=configs.mlp_ratio,
+            act_layer=configs.act_layer
+        )
+        self.bottleneck = Bottleneck(
+            C=self.C, input_resolution=self.input_resolution,
+            n_layers=self.n_layers, window_sizes=self.window_sizes,
+            head_dim=self.head_dim, attn_drop=configs.attn_drop,
+            proj_drop=configs.proj_drop, mlp_ratio=configs.mlp_ratio,
+            act_layer=configs.act_layer
+        )
+        self.decoder = Decoder(
+            input_resolution=self.input_resolution, C=self.C,
+            window_sizes=self.window_sizes, head_dim=self.head_dim,
+            n_layers=self.n_layers, attn_drop=configs.attn_drop,
+            proj_drop=configs.proj_drop, mlp_ratio=configs.mlp_ratio,
+            act_layer=configs.act_layer
+        )
+        self.output_proj = OutputProj(self.C, self.output_sequence_length)
+
     def forward(self, x):
-        # Input shape is B C H W
-        if self.hard_enforce_stations:
-            station_values = x[:, 0, ...].unsqueeze(1)  # [B, 1, H, W]
-            station_mask = x[:, -1, ...].unsqueeze(1)  # [B, 1, H, W]
-        x = self.input_proj(x)  # B H W C
-        x, skip_connections = self.encoder(x)  # B H W C
-        x = self.bottleneck(x)  # B H W C
-        x = self.decoder(x, skip_connections)  # B H W C
-        x = self.output_proj(x)  # B C H W
-        if self.hard_enforce_stations:
-            x = station_mask * station_values + (1-station_mask)*x
-        return x    # Output shape is B C H W
+        # Input: [B, C, H, W]
+
+        x = self.input_proj(x)             # [B, H, W, C]
+        x, skip_connections = self.encoder(x)
+        x = self.bottleneck(x)
+        x = self.decoder(x, skip_connections)
+        x = self.output_proj(x)            # [B, C, H, W]
+
+        return x
 
 # %%
 if __name__ == "__main__":
-    from util import initialize_weights_xavier,initialize_weights_he
-    # Example usage
-    input_resolution = (256, 288)
-    in_channels = 3
-    out_channels = 1
-    C = 32
-    n_layers = 4
-    window_sizes = [8, 8, 4, 4, 2]
-    head_dim = 32
-    attn_drop = 0.2
-    proj_drop = 0.2
-    mlp_ratio = 4.0
-    act_layer = nn.GELU
-    seed = 42
-    model = SwinT2UNet(input_resolution=input_resolution, 
-                        in_channels=in_channels, 
-                        out_channels=out_channels, 
-                        C=C, n_layers=n_layers, 
-                        window_sizes=window_sizes,
-                        head_dim=head_dim,
-                        attn_drop=attn_drop,
-                        proj_drop=proj_drop,
-                        mlp_ratio=mlp_ratio,
-                        act_layer=act_layer,
-                        hard_enforce_stations=True)
-    if act_layer == nn.GELU:
-        initialize_weights_xavier(model,seed = seed)
-    elif act_layer == nn.ReLU:
-        initialize_weights_he(model,seed = seed)
-    print(model)  # Print the model architecture
-    # print the total number of parameters in the model
-    print(f'Total number of parameters: {sum(p.numel() for p in model.parameters())}')
-    # Create a random input tensor
-    x = torch.randn(1, in_channels, input_resolution[0], input_resolution[1])  # (batch_size, channels, height, width)
-    print(x.shape)  # Should be (1, 3, 256, 288)
+    import torch
+    import torch.nn as nn
+    from types import SimpleNamespace
+    from util import initialize_weights_xavier, initialize_weights_he
+
+    # === Define configs ===
+    configs = SimpleNamespace(
+        img_size=(256, 288),
+        input_sequence_length=3,   # instead of in_channels
+        output_sequence_length=1,  # instead of out_channels
+        C=32,
+        n_layers=4,
+        window_sizes=[8, 8, 4, 4, 2],
+        head_dim=32,
+        attn_drop=0.2,
+        proj_drop=0.2,
+        mlp_ratio=4.0,
+        act_layer=nn.GELU,
+        weights_seed=42
+    )
+
+    # === Build model ===
+    model = SwinT2UNet(configs)
+
+    # === Weight initialization ===
+    if configs.act_layer == nn.GELU:
+        initialize_weights_xavier(model, seed=configs.weights_seed)
+    elif configs.act_layer == nn.ReLU:
+        initialize_weights_he(model, seed=configs.weights_seed)
+
+    print(model)  # Print architecture
+    print(f"Total number of parameters: {sum(p.numel() for p in model.parameters())}")
+
+    # === Test forward ===
+    x = torch.randn(1, configs.input_sequence_length,
+                    configs.img_size[0], configs.img_size[1])
+    print("Input shape:", x.shape)
     output = model(x)
-    print(output.shape)  # Should be (1, 1, 256, 288)
-    # Print weights of the first conv layer
-    first_conv_layer = model.input_proj.proj[0]  # First nn.Conv2d inside the first block
+    print("Output shape:", output.shape)
+
+    # === Inspect weights of first conv layer ===
+    first_conv_layer = model.input_proj.proj[0]
     print("Weights of the first Conv2d layer:")
     print(first_conv_layer.weight.data)
 # %%

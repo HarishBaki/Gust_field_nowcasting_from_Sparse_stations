@@ -98,52 +98,86 @@ class Decoder(nn.Module):
 
 class UNet(nn.Module):
     '''
-    UNet architecture for image reconstruction tasks.
-    This model consists of an encoder, a bottleneck, and a decoder.
-    Parameters:
-    - in_channels (int): Number of input channels.
-    - out_channels (int): Number of output channels.
-    - C (int): Number of channels (or) dimensions in the intermediate layers.
-    - n_layers (int): Number of convolutional layers in the network.
-    - kernel (tuple): Size of the convolutional kernel. We used 3*3 kernel.
-    - hard_enforce_stations (bool): If True, enforces station values in the output. Technically, the output will have station values at the staiton locations.
-    Returns:
-    - output (Tensor): Output tensor after passing through the network.
-    The entire architectue is based on the paper "Uformer: A General U-Shaped Transformer for Image Restoration"
-    The corresponding code is available at "https://github.com/ZhendongWang6/Uformer"
-    In the encoder, the Channels will double after each ConvBlock, while the spatial dimensions will be halved after each downsampling layer.
-    In the decoder, the spatial dimensions will be doubled after each upsampling layer, then the channels will double by concatnation, while the channels will be halved after each ConvBlock.
+    U-Net architecture for spatiotemporal image reconstruction tasks.
 
+    The model is configured entirely from a single `configs` (args) object, 
+    which specifies input/output channels, number of layers, activation 
+    function, and regularization settings.
+
+    Structure:
+    - Encoder: progressively downsamples the input. At each stage, channels 
+      are doubled and spatial dimensions are halved.
+    - Bottleneck: deepest part of the network, processing compressed 
+      representations.
+    - Decoder: progressively upsamples. At each stage, features are 
+      concatenated with corresponding encoder outputs (skip connections), 
+      channels are halved, and spatial dimensions are restored.
+
+    Parameters taken from `configs`:
+    - input_sequence_length (int): number of input channels (Tin).
+    - output_sequence_length (int): number of output channels (Tout).
+    - C (int): base channel dimension used in intermediate layers.
+    - n_layers (int): depth of encoder/decoder (number of down/up blocks).
+    - dropout_prob (float): dropout probability inside blocks.
+    - drop_path_prob (float): stochastic depth (drop path) probability.
+    - act_layer (nn.Module): activation function (e.g., nn.ReLU, nn.GELU).
+    - hard_enforce_stations (bool, optional): if True, enforces station values 
+      at known grid points in the output (application-specific).
+
+    Notes:
+    - This implementation follows the general U-shaped design from 
+      "Uformer: A General U-Shaped Transformer for Image Restoration" 
+      (https://github.com/ZhendongWang6/Uformer).
+    - Encoder doubles channels per stage, Decoder mirrors the process 
+      with skip connections.
     '''
-    def __init__(self, in_channels=3, out_channels=1, C=32, dropout_prob=0.2,drop_path_prob=0.0,act_layer=nn.ReLU, n_layers=4,hard_enforce_stations=False):
+    def __init__(self, configs):
         super(UNet, self).__init__()
-        self.hard_enforce_stations = hard_enforce_stations
-        self.encoder = Encoder(in_channels, C,dropout_prob,drop_path_prob,act_layer, n_layers)
+        input_sequence_length = configs.input_sequence_length
+        C = configs.C
+        output_sequence_length = configs.output_sequence_length
+        dropout_prob = configs.dropout_prob
+        drop_path_prob = configs.drop_path_prob
+        act_layer = configs.act_layer
+        n_layers = configs.n_layers
+        self.encoder = Encoder(input_sequence_length, C,dropout_prob,drop_path_prob,act_layer, n_layers)
         self.bottleneck = Bottleneck(C, dropout_prob,drop_path_prob,act_layer, n_layers)
-        self.decoder = Decoder(out_channels, C, dropout_prob,drop_path_prob,act_layer, n_layers)
+        self.decoder = Decoder(output_sequence_length, C, dropout_prob,drop_path_prob,act_layer, n_layers)
 
     def forward(self, x):
-        if self.hard_enforce_stations:
-            station_values = x[:, 0, ...].unsqueeze(1)  # [B, 1, H, W]
-            station_mask = x[:, -1, ...].unsqueeze(1)  # [B, 1, H, W]
         x, skip_connections = self.encoder(x)
         x = self.bottleneck(x)
         x = self.decoder(x, skip_connections)
-        if self.hard_enforce_stations:
-            x = station_mask * station_values + (1-station_mask)*x
         return x
     
 # %%    
 if __name__ == "__main__":
+    from types import SimpleNamespace
     from util import initialize_weights_xavier,initialize_weights_he
-    act_layer = nn.ReLU
-    seed = 42
-    model = UNet(in_channels=3, out_channels=1, C=32, dropout_prob=0.2,drop_path_prob=0.2,act_layer=act_layer,n_layers=4,hard_enforce_stations=True)
-    if act_layer == nn.GELU:
-        initialize_weights_xavier(model,seed = seed)
-    elif act_layer == nn.ReLU:
-        initialize_weights_he(model,seed = seed)
+    # === Define arguments in one place ===
+    args = SimpleNamespace(
+        input_sequence_length=3,      # instead of in_channels
+        output_sequence_length=1,     # instead of out_channels
+        C=32,
+        dropout_prob=0.2,
+        drop_path_prob=0.2,
+        act_layer=nn.ReLU,
+        n_layers=4,
+        hard_enforce_stations=True,
+        weights_seed=42
+    )
+
+    # === Build model from args ===
+    model = UNet(args)
+
+    # === Initialize weights ===
+    if args.act_layer == nn.GELU:
+        initialize_weights_xavier(model, seed=args.weights_seed)
+    elif args.act_layer == nn.ReLU:
+        initialize_weights_he(model, seed=args.weights_seed)
+
     print(model)
+
     # print the total number of parameters in the model
     print(f'Total number of parameters: {sum(p.numel() for p in model.parameters())}')
     x = torch.randn(1, 3, 256, 288)  # Example input
