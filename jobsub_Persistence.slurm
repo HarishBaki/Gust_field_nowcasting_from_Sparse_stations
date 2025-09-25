@@ -30,11 +30,11 @@ export MASTER_PORT=$((20000 + RANDOM % 20000))
 # Set defaults if not provided
 # ===============================
 prediction_dir=${prediction_dir:-'Predictions'}
-data_type=${data_type:-'NYSM'}
+data_type=${data_type:-'RTMA'}
 zarr_store=${zarr_store:-'data/NYSM.zarr'}
-start_date=${start_date:-'2023-01-01T00:00:00'}
-end_date=${end_date:-'2023-01-31T23:59:59'}
-freq=${freq:-'5min'}
+start_date=${start_date:-'2024-01-01T00:00:00'}
+end_date=${end_date:-'2024-12-31T23:59:59'}
+freq=${freq:-'60min'}
 output_sequence_length=${output_sequence_length:-72}
 batch_size=${batch_size:-32}
 num_workers=${num_workers:-16}
