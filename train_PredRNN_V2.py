@@ -525,12 +525,12 @@ if __name__ == "__main__":
         input_transform = Transform(
             mode=args.transform,  # 'standard' or 'minmax'
             stats=input_stats,
-            feature_axis=-1     # Channels 2, in B,T,C,H,W
+            feature_axis=2     # Channels 2, in B,T,C,H,W
         )   
         target_transform = Transform(
             mode=args.transform,  # 'standard' or 'minmax'
             stats=target_stats,
-            feature_axis=-1     # Channels 2, in B,T,C,H,W
+            feature_axis=2     # Channels 2, in B,T,C,H,W
         )
     else:
         input_transform = None
