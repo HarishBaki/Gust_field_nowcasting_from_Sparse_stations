@@ -30,9 +30,10 @@ from models.UNet import UNet
 from models.SwinT2_UNet import SwinT2UNet
 from models.util import initialize_weights_xavier,initialize_weights_he
 
-from losses import MaskedErrorLoss, MaskedTVLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
+from losses import MaskedErrorLoss, MaskedCharbonnierLoss, MaskedCombinedMAEQuantileLoss
 
-from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store
+from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store, reshape_patch, reshape_patch_back, wandb_safe_config
+from types import SimpleNamespace
 
 """
 # Computing persistance error
@@ -115,7 +116,9 @@ if __name__ == "__main__":
     orography = orography.orog
 
     mask = xr.open_dataset('mask_2d.nc').mask
-    mask_tensor = torch.tensor(mask.values.astype(np.float32),device=args.device)  # [H, W], 1=valid, 0=invalid
+    mask_tensor = torch.tensor(mask.values,device=args.device)  # [H, W], 1=valid, 0=invalid
+    mask_tensor_expanded = mask_tensor[None, None, :, :].to(args.device)  # [1,1, H,W]  # This is essential in masking and loss computation. Care must be taken for the shape according to the model design.
+
 
     # Load NYSM station data
     nysm = pd.read_csv('nysm.csv')
@@ -154,19 +157,19 @@ if __name__ == "__main__":
                                  num_workers=args.num_workers, pin_memory=True)
     print("Test dataset length:", len(test_dataset))
 
-    metric = MaskedErrorLoss(mask_tensor).to(args.device)
+    metric = MaskedErrorLoss(mask_tensor_expanded).to(args.device)
     total_ae, total_count_ae = 0.0, 0.0
     total_se, total_count_se = 0.0, 0.0
 
     with torch.no_grad():
         for batch in tqdm(test_dataloader, desc="[Test]"):
             inputs, targets, _, _ = batch
-            inputs = inputs.unsqueeze(-1).to(args.device)   # (B, T_in, H, W, C)
-            targets = targets.unsqueeze(-1).to(args.device) # (B, T_out, H, W, C)
+            inputs = inputs.to(args.device)   # (B, T_in, H, W)
+            targets = targets.to(args.device) # (B, T_out, H, W)
 
             # Persistence prediction: repeat last input
             persistence_pred = inputs[:, -1].unsqueeze(1).repeat(
-                1, args.output_sequence_length, 1, 1, 1
+                1, args.output_sequence_length, 1, 1
             )
 
             # MAE
