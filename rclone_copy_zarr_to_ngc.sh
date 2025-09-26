@@ -1,0 +1,2 @@
+rclone copy --progress --transfers 12 data/NYSM.zarr ngc:/home/hb533188/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/data/NYSM.zarr
+rclone copy --progress --transfers 12 data/RTMA.zarr ngc:/home/hb533188/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/data/RTMA.zarr
