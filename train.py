@@ -40,90 +40,92 @@ from types import SimpleNamespace
 from util import str_or_none, int_or_none, bool_from_str, EarlyStopping, save_model_checkpoint, restore_model_checkpoint, init_zarr_store, wandb_safe_config
 
 # %%
-def forward_step(input_tensor,target_tensor,
+def forward_step(input_tensor, target_tensor,
                  model, criterion, metric,
                  mask_tensor_expanded, args,
                  input_transform=None, return_preds=False):
     """
     One forward + loss + metric computation step.
-    
+
+    Supports prediction_mode: ["absolute", "delta", "delta+abs"]
+
     Parameters
     ----------
-    input_tensor : torch.Tensor
-        Shape [B, Tin, H, W]
-    target_tensor : torch.Tensor
-        Shape [B, Tout, H, W]
+    input_tensor : [B, Tin, H, W]
+    target_tensor : [B, Tout, H, W]
     model : nn.Module
     criterion : callable
-        Loss function
     metric : callable
-        Metric function
-    mask_tensor_expanded : torch.Tensor
-        Mask of shape [1,1,H,W]
-    args : Namespace
-        Holds config (input_sequence_length,output_sequence_length, etc.)
-    input_transform : Transform, optional
-        Transformation with .__call__ and .inverse
-    return_preds : bool, optional
-        Whether to return predictions, only for testing
+    mask_tensor_expanded : [1,1,H,W]
+    args : Namespace (must have args.prediction_mode)
+    input_transform : Transform (with .__call__, .inverse), optional
+    return_preds : bool
     """
-    # Transform input
+
+    # === Transform input & target ===
     if input_transform is not None:
         input_tensor = input_transform(input_tensor)
         target_tensor = input_transform(target_tensor)
 
-    # Mask input
+    # Mask input & target
     masked_input_tensor = torch.where(mask_tensor_expanded, input_tensor, 0)
     masked_target_tensor = torch.where(mask_tensor_expanded, target_tensor, 0)
 
-    # Forward model
-    next_frames = model(masked_input_tensor)  # [B, Tout, H, W]
+    # === Forward pass ===
+    preds = model(masked_input_tensor)  # [B, Tout, H, W]
 
-    # Mask predictions
-    masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
+    # === Handle prediction mode ===
+    if args.prediction_mode == "absolute":
+        # Direct comparison
+        loss = criterion(preds, masked_target_tensor) if criterion else None
+        preds_abs = preds
 
-    # Compute loss
-    if criterion is not None:
-        loss = criterion(masked_next_frames, masked_target_tensor)
+    elif args.prediction_mode == "delta":
+        # Build delta targets
+        x_last   = masked_input_tensor[:, -1:]                   # [B,1,H,W]
+        y_prev   = torch.cat([x_last, masked_target_tensor[:, :-1]], dim=1)
+        target_delta = masked_target_tensor - y_prev             # [B,Tout,H,W]
 
-    # Metric on inverse-transformed data if needed
+        # Train on deltas
+        loss = criterion(preds, target_delta) if criterion else None
+
+        # Reconstruct absolutes
+        preds_abs = torch.cumsum(preds, dim=1) + x_last
+
+    elif args.prediction_mode == "delta+abs":
+        x_last   = masked_input_tensor[:, -1:]
+        y_prev   = torch.cat([x_last, masked_target_tensor[:, :-1]], dim=1)
+        target_delta = masked_target_tensor - y_prev
+
+        loss_delta = criterion(preds, target_delta) if criterion else 0.0
+        preds_abs  = torch.cumsum(preds, dim=1) + x_last
+        loss_abs   = criterion(preds_abs, masked_target_tensor) if criterion else 0.0
+
+        loss = args.lambda_delta * loss_delta + args.lambda_abs * loss_abs
+
+    else:
+        raise ValueError(f"Unknown prediction_mode: {args.prediction_mode}")
+
+    # === Inverse-transform for metric ===
     if input_transform is not None:
         target_tensor = input_transform.inverse(target_tensor)
-        masked_target_tensor = torch.where(mask_tensor_expanded, target_tensor, 0)
+        preds_abs = input_transform.inverse(preds_abs)
 
-        next_frames = input_transform.inverse(next_frames)
-        masked_next_frames = torch.where(mask_tensor_expanded, next_frames, 0)
+    masked_target_tensor = torch.where(mask_tensor_expanded, target_tensor, 0)
+    masked_preds_abs     = torch.where(mask_tensor_expanded, preds_abs, 0)
 
+    metric_value = None
     if metric is not None:
         metric_value = metric(
-            masked_next_frames,
-            masked_target_tensor,
+            masked_preds_abs, masked_target_tensor,
             mode='mse', reduction='mean'
         )
 
-    if (criterion is not None) and (metric is not None):
-        if return_preds:
-            return loss, metric_value, masked_next_frames
-        else:
-            return loss, metric_value
-
-    elif (criterion is not None) and (metric is None):
-        if return_preds:
-            return loss, masked_next_frames
-        else:
-            return loss
-
-    elif (criterion is None) and (metric is not None):
-        if return_preds:
-            return metric_value, masked_next_frames
-        else:
-            return metric_value
-
-    else:  # criterion is None and metric is None
-        if return_preds:
-            return masked_next_frames
-        else:
-            return None  # or: raise ValueError("Nothing to return")
+    # === Return ===
+    if return_preds:
+        return loss, metric_value, masked_preds_abs
+    else:
+        return (loss, metric_value) if (criterion and metric) else loss or metric_value
 
 def run_epochs(model, train_dataloader, val_dataloader, optimizer, criterion, metric,
                train_sampler, scheduler, early_stopping, mask_tensor_expanded, input_transform=None,target_transform=None,
@@ -284,6 +286,7 @@ if __name__ == "__main__":
     # === Argument parsing ===
     parser = argparse.ArgumentParser(description="Training configuration for wind prediction model")
     parser.add_argument('--variable', type=str, default='i10fg', help='Input variable to predict')
+    parser.add_argument('--data_type', type=str, default='NYSM', help='Type of data to use')
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
     parser.add_argument('--model_name', type=str, default='SwinT2UNet', help='Model to use')
     parser.add_argument('--transform', type=str_or_none, default='minmax', help='Data transformation type')
@@ -292,10 +295,12 @@ if __name__ == "__main__":
     parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     parser.add_argument('--loss_name', type=str, default='MaskedCharbonnierLoss', help='Loss function name')
     parser.add_argument('--resume', action='store_true', help='Resume training from latest checkpoint')
-    parser.add_argument('--input_sequence_length', type=int, default=36, help='Input window size (number of timesteps)')
-    parser.add_argument('--output_sequence_length', type=int, default=36, help='Output window size (number of timesteps)')
+    parser.add_argument('--input_sequence_length', type=int, default=12, help='Input window size (number of timesteps)')
+    parser.add_argument('--output_sequence_length', type=int, default=6, help='Output window size (number of timesteps)')
     parser.add_argument('--step_size', type=int, default=1, help='Step size for input/output windows')
     parser.add_argument('--forecast_offset', type=int, default=0, help='Offset for the forecast start time')
+    parser.add_argument('--prediction_mode', type=str, default='delta', help='Prediction mode: absolute, delta, or delta+abs')
+    parser.add_argument('--finetune_step', type=int_or_none, default=None, help='recursive finetuning steps into future, None means baseline, not finetuning')
     parser.add_argument('--is_training', type=int, default=1, help='Whether the model is in training mode')
     args, unknown = parser.parse_known_args([] if 'ipykernel_launcher' in sys.argv[0] else None)
     args.total_sequence_length = args.input_sequence_length + args.output_sequence_length
@@ -304,12 +309,22 @@ if __name__ == "__main__":
 
     # Back to a single name space ===
     args = SimpleNamespace(**merged)
+    
+    # Only needed if using delta+abs
+    args.lambda_delta = 1.0
+    args.lambda_abs = 1.0
 
     # Checkpoint dir
+    args.checkpoint_dir = f"{args.checkpoint_dir}/{args.data_type}"
     args.checkpoint_dir = f"{args.checkpoint_dir}/{args.model_name}"
     args.checkpoint_dir = f"{args.checkpoint_dir}/{args.loss_name}"
     args.checkpoint_dir = f"{args.checkpoint_dir}/{args.transform}"
-    args.checkpoint_dir =  f"{args.checkpoint_dir}/in_window-{args.input_sequence_length}_out_window-{args.output_sequence_length}-step-{args.step_size}_offset-{args.forecast_offset}"
+    args.checkpoint_dir = f"{args.checkpoint_dir}/in_window-{args.input_sequence_length}_out_window-{args.output_sequence_length}-step-{args.step_size}_offset-{args.forecast_offset}"
+    args.checkpoint_dir = f"{args.checkpoint_dir}/{args.prediction_mode}"
+    if args.finetune_step is None:
+        args.checkpoint_dir = f"{args.checkpoint_dir}/baseline"
+    else:
+        args.checkpoint_dir = f"{args.checkpoint_dir}/finetune-step{args.finetune_step}"
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # ==================== Distributed setup ====================
@@ -342,10 +357,10 @@ if __name__ == "__main__":
     mask_tensor_expanded = mask_tensor[None, None, :, :].to(args.device)  # [1,1, H,W]  # This is essential in masking and loss computation. Care must be taken for the shape according to the model design.
     
     # %%
-    zarr_store = 'data/NYSM.zarr'
+    zarr_store = f'data/{args.data_type}.zarr'
     train_val_dates_range = ['2021-01-01T00:00:00', '2023-12-31T23:59:59']
     test_dates_range = ['2024-01-01T00:00:00','2024-12-31T23:59:59']
-    freq = '5min'
+    freq = '5min' if args.data_type == 'NYSM' else '60min'
     data_seed = 42
 
     NYSM_stats = xr.open_dataset('NYSM_variable_stats.nc')

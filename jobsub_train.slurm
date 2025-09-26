@@ -6,7 +6,7 @@
 #SBATCH --time=07-00:00:00
 ##SBATCH --mem=640gb
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
+#SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=32
 #SBATCH --exclude=dgx02
@@ -28,18 +28,21 @@ export MASTER_PORT=$((20000 + RANDOM % 20000))
 # Set defaults if not provided
 # ===============================
 variable=${variable:-'i10fg'}
+data_type=${data_type:-'NYSM'} # Options: 'NYSM', 'RTMA'
 checkpoint_dir=${checkpoint_dir:-'checkpoints'}
-model_name=${model_name:-'UNet'} # Options: 'nowcastnet', 'predrnn_v2', 'CGsNet'
+model_name=${model_name:-'SwinT2UNet'} # Options: 'nowcastnet', 'predrnn_v2', 'CGsNet'
 transform=${transform:-'minmax'}
 batch_size=${batch_size:-12}
 num_workers=${num_workers:-16}
 num_epochs=${num_epochs:-200}
 loss_name=${loss_name:-'MaskedCharbonnierLoss'}
 resume=${resume:-'false'}
-input_sequence_length=${input_sequence_length:-36}
-output_sequence_length=${output_sequence_length:-36}
+input_sequence_length=${input_sequence_length:-12}
+output_sequence_length=${output_sequence_length:-6}
 step_size=${step_size:-1}
 forecast_offset=${forecast_offset:-0}
+prediction_mode=${prediction_mode:-'delta'} # Options: 'absolute', 'delta', 'delta+abs'
+finetune_step=${finetune_step:-'None'} # Options: None, integer
 is_training=${is_training:-1}
 train_mode=${train_mode:-0} # 0 for evolution network, 1 for nowcastnet network
 
@@ -50,6 +53,7 @@ echo "======================================"
 echo "Launching training with configuration:"
 echo "--------------------------------------"
 echo "Variable:                 $variable"
+echo "Data Type:                $data_type"
 echo "Checkpoint Dir:           $checkpoint_dir"
 echo "Model:                    $model_name"
 echo "Transform:                $transform"
@@ -62,6 +66,8 @@ echo "Input Window Size:        $input_sequence_length"
 echo "Output Window Size:       $output_sequence_length"
 echo "Step Size:                $step_size"
 echo "Forecast Offset:          $forecast_offset"
+echo "Prediction Mode:          $prediction_mode"
+echo "Finetune Step:            $finetune_step"
 echo "Is Training:              $is_training"
 echo "Train Mode:               $train_mode"
 echo "======================================"
@@ -89,6 +95,7 @@ fi
 
 torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT $train_file \
   --variable "$variable" \
+  --data_type "$data_type" \
   --checkpoint_dir "$checkpoint_dir" \
   --model_name "$model_name" \
   --transform "$transform" \
@@ -100,6 +107,8 @@ torchrun --nproc_per_node=$nproc_per_node --master_port=$MASTER_PORT $train_file
   --output_sequence_length "$output_sequence_length" \
   --step_size "$step_size" \
   --forecast_offset "$forecast_offset" \
+  --prediction_mode "$prediction_mode" \
+  --finetune_step "$finetune_step" \
   --is_training "$is_training" \
   --train_mode "$train_mode" \
   $( [ "$resume" = "true" ] && echo "--resume" )
