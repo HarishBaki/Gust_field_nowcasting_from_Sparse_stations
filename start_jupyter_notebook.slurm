@@ -8,10 +8,10 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-task=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=256
 #SBATCH --container-image=docker://nvcr.io/nvidia/physicsnemo/physicsnemo:25.03
 #SBATCH --container-name=physicsnemo
-#SBATCH --container-mounts=/network/rit/dgx/dgx_basulab/Harish:/mnt/dgx_basulab/Harish,/network/rit/lab/basulab:/mnt/basulab,/network/rit/home/hb533188:/mnt/home/hb533188,/network/rit/dgx/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project,/network/rit/lab/basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/data/MRMS_grib_data:/mnt/current_project/data/MRMS_grib_data,/network/rit/lab/basulab/Harish/Downloads/s5cmd_2.3.0_Linux-64bit:/mnt/s5cmd
+#SBATCH --container-mounts=/network/rit/dgx/dgx_basulab/Harish:/mnt/dgx_basulab/Harish,/network/rit/lab/basulab:/mnt/basulab,/network/rit/home/hb533188:/mnt/home/hb533188,/network/rit/dgx/dgx_basulab/Harish/Gust_field_nowcasting_from_Sparse_stations:/mnt/current_project,/network/rit/home/hb533188:/mnt/home/hb533188,/network/rit/lab/basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/Predictions:/mnt/current_project/Predictions,/network/rit/lab/basulab/Harish/Gust_field_nowcasting_from_Sparse_stations/data/MRMS_grib_data:/mnt/current_project/data/MRMS_grib_data,/network/rit/lab/basulab/Harish/Downloads/s5cmd_2.3.0_Linux-64bit:/mnt/s5cmd
 #SBATCH --container-workdir=/mnt/current_project
 
 export PYTHONNOUSERSITE=1   # make Python use the system site-packages, not from local user
