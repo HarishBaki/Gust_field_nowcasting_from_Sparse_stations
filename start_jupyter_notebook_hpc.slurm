@@ -6,11 +6,11 @@
 #SBATCH --time=01-00:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=128
+#SBATCH --cpus-per-task=256
 
 # Load conda init script
 source /network/rit/lab/basulab/Anaconda3/etc/profile.d/conda.sh
-conda activate cdo
+conda activate conus404
 
 export PATH=$PATH:/mnt/s5cmd
 
@@ -29,5 +29,4 @@ echo "=========================================================="
 
 # Start Jupyter Lab
 jupyter lab --no-browser --ip=0.0.0.0 --port=$port \
-  --NotebookApp.token="${token}" \
-  --notebook-dir=/network/rit/lab/basulab/Harish/Gust_field_nowcasting_from_Sparse_stations
+  --NotebookApp.token="${token}"
